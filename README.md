@@ -1,0 +1,226 @@
+# broadworks-mcp
+
+A production-ready **MCP (Model Context Protocol) server** that exposes BroadWorks operations to MCP
+clients (LLM agents, desktop apps). It is a single **Spring Boot 3.x / Java 21** application built
+with **Maven**, using **Spring AI MCP** for the server transport and calling the **Alpaca toolkit**
+(`co.ecg.alpaca.toolkit`) directly as the sole BroadWorks interface.
+
+The server is simultaneously:
+
+- an **OAuth 2.1 Authorization Server (AS)** (Spring Authorization Server) fronting **Google OIDC**,
+- a **Resource Server (RS)** guarding MCP tool calls with opaque bearer tokens, and
+- a **Spring AI MCP server** exposing BroadWorks tools.
+
+Storage is pluggable: **DynamoDB (durable, default)** or **in-memory (fallback)**, with secret fields
+encrypted via a **customer-managed KMS key**.
+
+---
+
+## Architecture
+
+```
+MCP client ──bearer──▶ Resource Server (local opaque introspection) ──▶ Spring AI MCP (/mcp)
+     │                                                                     └▶ ServiceProvider & Group @Tool
+     └──DCR / auth-code + PKCE──▶ Spring Authorization Server ──oauth2Login──▶ Google OIDC
+                                            │                                       │
+                                            ▼                                       ▼
+                                       SessionStore ◀───────────── sessions ── DynamoDB / in-memory
+   Tools ──▶ AlpacaConnectionFactory ──▶ ResourceStore (KMS-encrypted secrets) ──▶ Alpaca toolkit ──▶ BroadWorks OCI
+```
+
+- **OAuth endpoints** use Spring Authorization Server / Google **defaults**
+  (`/oauth2/authorize`, `/oauth2/token`, `/oauth2/jwks`, discovery at
+  `/.well-known/oauth-authorization-server`, Google callback `/login/oauth2/code/google`).
+- **Dynamic Client Registration** (RFC 7591, public clients only) is at `POST /oauth/register`.
+- **Protected Resource Metadata** (RFC 9728) is at `GET /.well-known/oauth-protected-resource`
+  (and its trailing-slash variant).
+- **MCP** is served at the Spring AI defaults (rooted at `/mcp`, SSE at `/sse`).
+
+---
+
+## Prerequisites
+
+- **JDK 21** (the build targets `release=21`).
+- **Maven 3.9+**.
+- The **Alpaca toolkit JARs** under `lib/` (supplied):
+  - `alpaca-commons-12.2.0-RELEASE.jar`
+  - `alpaca-model-12.2.0-RELEASE.jar`
+  - `alpaca-core-12.2.0-RELEASE-26.jar`
+  - `alpaca-library-12.2.0-RELEASE-26.jar`
+  - (`alpaca-server-…jar` is kept for reference only and is **not** placed on the classpath.)
+- For deployment: **Node 18+**, **AWS CDK v2**, and AWS credentials.
+
+---
+
+## Installing the Alpaca toolkit JARs
+
+The toolkit is not on Maven Central; install the supplied JARs into your local Maven repository with
+**minimal generated POMs** (no transitive Spring Boot 2.7 dependencies):
+
+```bash
+./scripts/install-alpaca.sh
+```
+
+Or let Maven do it on first build via the bundled profile:
+
+```bash
+mvn -Pinstall-alpaca clean verify
+```
+
+> The install is done with `install:install-file` (not `system` scope) so the `spring-boot-maven-plugin`
+> repackage and the container image work correctly.
+
+---
+
+## Build & test
+
+```bash
+# Install Alpaca JARs first (once), then:
+mvn -Pinstall-alpaca clean verify
+```
+
+> **Tip:** the repo-root `run.sh` wraps the common build and deploy/undeploy
+> actions. Run `./run.sh help` for the full list; e.g. `./run.sh all`
+> (install-alpaca + verify), `./run.sh build`, `./run.sh test`, `./run.sh run`,
+> `./run.sh deploy <certArn>`, `./run.sh undeploy`.
+
+- Unit tests cover the token factory, both stores, encryption, ID-token verification, and the MCP
+  tools.
+- One `@SpringBootTest` boots the full app (in-memory stores) and verifies OAuth discovery, dynamic
+  client registration, the 401 bearer challenge, and Resource-Server enforcement.
+- The DynamoDB/KMS integration test runs against **LocalStack** via Testcontainers and is **skipped
+  automatically when Docker is unavailable**.
+
+No real Google or BroadWorks network calls are ever made in tests.
+
+---
+
+## Running locally
+
+### HTTP transport (default, port 8080)
+
+```bash
+STORAGE_BACKEND=IN_MEMORY \
+PUBLIC_BASE_URL=http://localhost:8080 \
+java -jar target/broadworks-mcp-*.jar
+```
+
+- Health: `GET http://localhost:8080/actuator/health`
+- AS metadata: `GET http://localhost:8080/.well-known/oauth-authorization-server`
+- Resource metadata: `GET http://localhost:8080/.well-known/oauth-protected-resource`
+
+### stdio transport (desktop clients)
+
+```bash
+java -Dspring.profiles.active=stdio -jar target/broadworks-mcp-*.jar
+```
+
+Under the `stdio` profile the web server is disabled, MCP is served over stdin/stdout, storage is
+in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP protocol).
+
+---
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | Externally reachable base URL; used for discovery docs and the `resource_metadata` challenge. HTTPS in production. |
+| `OIDC_ISSUER_URI` | `https://accounts.google.com` | Upstream OIDC issuer. |
+| `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth client id. |
+| `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client secret. |
+| `STORAGE_BACKEND` | `DYNAMODB` | `DYNAMODB` (durable) or `IN_MEMORY` (local/tests). |
+| `SESSION_TABLE` | `broadworks-mcp-sessions` | DynamoDB sessions/clients table. |
+| `USER_CONFIG_TABLE` | `broadworks-mcp-user-config` | DynamoDB per-user resource table. |
+| `KMS_KEY_ID` | *(empty)* | Customer-managed KMS key id/ARN for secret encryption (required for `DYNAMODB`). |
+| `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
+| `APPLICATION_ID` | `broadworks-mcp` | Partition key for the per-user resource table. |
+| `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma/space list of allowed HTTPS redirect-URI prefixes (loopback + custom schemes always allowed). |
+| `ACCESS_TOKEN_TTL` | `PT1H` | Opaque access-token lifetime (capped by IdP ID-token expiry). |
+| `REFRESH_TOKEN_TTL` | `P30D` | Refresh-token lifetime. |
+| `AUTH_CODE_TTL` | `PT5M` | One-time authorization-code lifetime. |
+| `PENDING_AUTH_TTL` | `PT15M` | Pending-authorization state lifetime. |
+| `REGISTERED_CLIENT_TTL` | `P90D` | Registered (DCR) client lifetime. |
+| `ALPACA_CONNECTION_CACHE_TTL` | `PT30M` | Idle lifetime of a cached BroadWorks connection. |
+
+All values are externalized; there are no secrets or magic numbers in code.
+
+---
+
+## End-to-end auth flow
+
+1. An unauthenticated MCP call returns **401** with
+   `WWW-Authenticate: Bearer realm="mcp", resource_metadata="<PUBLIC_BASE_URL>/.well-known/oauth-protected-resource"`.
+2. The client performs **Dynamic Client Registration** (`POST /oauth/register`, public client, no
+   secret), then an OAuth 2.1 **authorization-code + PKCE (S256)** flow at `/oauth2/authorize`.
+3. The AS redirects to **Google**; on the callback the Google **ID token is verified** (JWKS
+   signature, `aud`, `iss`, `exp`, `sub` present, `email_verified == true`).
+4. The client exchanges the code at `/oauth2/token` and receives an **opaque** access token
+   (+ refresh token). A durable **session** is persisted keyed by the access-token value.
+5. Subsequent MCP calls send `Authorization: Bearer <opaque token>`. The Resource Server introspects
+   the token **locally** against the session store and injects `UserInfo{subject,email}` into the
+   tool context. All per-tenant state is keyed by `subject` (never email).
+
+Registering a public client:
+
+```bash
+curl -sS -X POST http://localhost:8080/oauth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"redirect_uris":["http://127.0.0.1:8123/callback"],"client_name":"My MCP Client"}'
+```
+
+---
+
+## MCP tools
+
+| Tool | Description |
+|---|---|
+| `broadworks_list_service_providers` | List service providers / enterprises. |
+| `broadworks_get_service_provider` | Get a service provider by id. |
+| `broadworks_list_groups` | List groups within a service provider. |
+| `broadworks_get_group` | Get a group by id within a service provider. |
+
+Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
+`AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set
+(Users, Devices, Call Centers, CDRs, …) is just a new `@Tool` bean registered in `McpToolConfig`.
+
+---
+
+## Deployment (AWS CDK)
+
+The `cdk/` app provisions ECS Fargate behind an HTTPS ALB, the two DynamoDB tables (sessions with the
+`refresh-index` GSI + user-config) encrypted by a customer-managed KMS key, a Fargate **task IAM
+role** granting scoped KMS + DynamoDB access (the blueprint's "IRSA" role), CloudWatch logs, and SSM
+SecureString-backed secrets injected as container env.
+
+1. Create the SSM SecureString parameters:
+
+   ```bash
+   aws ssm put-parameter --name /broadworks-mcp/google-client-id     --type SecureString --value "<client-id>"
+   aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
+   aws ssm put-parameter --name /broadworks-mcp/public-base-url       --type SecureString --value "https://mcp.example.com"
+   ```
+
+2. Deploy (build the image from the repo-root `Dockerfile` as a CDK asset):
+
+   ```bash
+   cd cdk
+   npm install
+   npx cdk deploy -c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>
+   ```
+
+   Without `certificateArn` the ALB listens on HTTP only (development).
+
+---
+
+## Notes & limitations
+
+- **In-memory storage is non-durable and single-node**: sessions/clients/resources are lost on
+  restart and not shared across replicas. Use `STORAGE_BACKEND=DYNAMODB` for production.
+- **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery,
+  which requires the toolkit's runtime companions (`org.apache.jcs:jcs` and `co.ecg:ecg-licensing`)
+  on the classpath plus a reachable BroadWorks OCI server. These are provisioned in the deployment
+  environment; when absent the connection factory fails fast with a safe error **after** resolving
+  and validating the per-tenant resource. All per-tenant resolution, argument mapping, and response
+  handling are exercised independently of a live server.
+- **Security**: PKCE (S256) is mandatory; DCR issues public clients only; secrets are KMS-encrypted
+  at rest; tokens, passwords, and protocol bodies are never logged.

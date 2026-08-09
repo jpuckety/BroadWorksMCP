@@ -1,0 +1,21 @@
+# stdio transport profile (desktop / local MCP clients).
+#
+# The web server is disabled and MCP is served over stdin/stdout. stdout is
+# reserved exclusively for the MCP protocol, so all logging is redirected to
+# stderr by logback-spring.xml (activated by this profile).
+#
+# The HTTP Resource Server filter is not applied in this mode, but tool handlers
+# still require an authenticated UserInfo supplied via the configured local
+# principal (see later steps). For local use the in-memory stores are selected.
+spring:
+  main:
+    web-application-type: none
+    banner-mode: "off"
+  ai:
+    mcp:
+      server:
+        stdio: true
+
+broadworks:
+  storage:
+    backend: IN_MEMORY

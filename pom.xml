@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.1</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.broadworks</groupId>
+    <artifactId>broadworks-mcp</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <name>broadworks-mcp</name>
+    <description>MCP server exposing BroadWorks operations via the Alpaca toolkit</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Managed dependency versions -->
+        <spring-ai.version>1.0.0</spring-ai.version>
+        <aws-sdk.version>2.29.29</aws-sdk.version>
+        <testcontainers.version>1.20.4</testcontainers.version>
+        <wiremock.version>3.9.2</wiremock.version>
+
+        <!-- Alpaca toolkit (installed from lib/ via scripts/install-alpaca.sh) -->
+        <alpaca.version>12.2.0-RELEASE</alpaca.version>
+
+        <!--
+            Override the Lombok version managed by the Spring Boot parent (1.18.36).
+            1.18.36 predates and does not support recent JDKs (24/25/26); when the
+            build JVM is newer than what Lombok understands, its annotation processor
+            is silently skipped, so @RequiredArgsConstructor / @Slf4j etc. are never
+            expanded and compilation fails. 1.18.46 supports current JDKs.
+        -->
+        <lombok.version>1.18.46</lombok.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- ===== Spring AI MCP server (Streamable HTTP/SSE on :8080 + stdio) ===== -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+
+        <!-- ===== OAuth 2.1 Authorization Server + Resource Server + upstream login ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-authorization-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-client</artifactId>
+        </dependency>
+
+        <!-- ===== Web / validation / observability ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ===== AWS SDK v2: durable storage (DynamoDB) + secret encryption (KMS) ===== -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>kms</artifactId>
+        </dependency>
+
+        <!-- ===== Alpaca toolkit (sole BroadWorks interface) ===== -->
+        <dependency>
+            <groupId>co.ecg</groupId>
+            <artifactId>alpaca-library</artifactId>
+            <version>${alpaca.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>co.ecg</groupId>
+            <artifactId>alpaca-core</artifactId>
+            <version>${alpaca.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>co.ecg</groupId>
+            <artifactId>alpaca-model</artifactId>
+            <version>${alpaca.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>co.ecg</groupId>
+            <artifactId>alpaca-commons</artifactId>
+            <version>${alpaca.version}</version>
+        </dependency>
+
+        <!-- ===== Lombok (boilerplate reduction) ===== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ===== Test ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>${wiremock.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>localstack</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                Explicitly declare the annotation processors on the compiler's
+                processor path. Since JDK 23+ (and enforced on JDK 26) javac no
+                longer runs annotation processors discovered only on the class path
+                by default, so Lombok would otherwise be skipped and the build would
+                fail with "cannot find symbol log" / missing generated constructors.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                        <path>
+                            <groupId>org.springframework.boot</groupId>
+                            <artifactId>spring-boot-configuration-processor</artifactId>
+                            <version>${project.parent.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+            Convenience profile that installs the Alpaca toolkit JARs from lib/
+            into the local Maven repository during the `initialize` phase.
+            Equivalent to running scripts/install-alpaca.sh once.
+
+            Usage: mvn -Pinstall-alpaca clean verify
+        -->
+        <profile>
+            <id>install-alpaca</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-install-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>install-alpaca-commons</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${project.basedir}/lib/alpaca-commons-12.2.0-RELEASE.jar</file>
+                                    <groupId>co.ecg</groupId>
+                                    <artifactId>alpaca-commons</artifactId>
+                                    <version>${alpaca.version}</version>
+                                    <packaging>jar</packaging>
+                                    <generatePom>true</generatePom>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>install-alpaca-model</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${project.basedir}/lib/alpaca-model-12.2.0-RELEASE.jar</file>
+                                    <groupId>co.ecg</groupId>
+                                    <artifactId>alpaca-model</artifactId>
+                                    <version>${alpaca.version}</version>
+                                    <packaging>jar</packaging>
+                                    <generatePom>true</generatePom>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>install-alpaca-core</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${project.basedir}/lib/alpaca-core-12.2.0-RELEASE-26.jar</file>
+                                    <groupId>co.ecg</groupId>
+                                    <artifactId>alpaca-core</artifactId>
+                                    <version>${alpaca.version}</version>
+                                    <packaging>jar</packaging>
+                                    <generatePom>true</generatePom>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>install-alpaca-library</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${project.basedir}/lib/alpaca-library-12.2.0-RELEASE-26.jar</file>
+                                    <groupId>co.ecg</groupId>
+                                    <artifactId>alpaca-library</artifactId>
+                                    <version>${alpaca.version}</version>
+                                    <packaging>jar</packaging>
+                                    <generatePom>true</generatePom>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

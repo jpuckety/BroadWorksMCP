@@ -1,0 +1,23 @@
+{
+  "name": "broadworks-mcp-cdk",
+  "version": "0.1.0",
+  "description": "AWS CDK app deploying broadworks-mcp on ECS Fargate (ALB/HTTPS) with DynamoDB, KMS and SSM.",
+  "bin": {
+    "broadworks-mcp-cdk": "bin/broadworks-mcp.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "aws-cdk": "^2.160.0",
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.160.0",
+    "constructs": "^10.3.0"
+  }
+}

@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: broadworks-mcp
+  main:
+    banner-mode: "off"
+
+  ai:
+    mcp:
+      server:
+        name: broadworks-mcp
+        version: 0.1.0
+        # HTTP transport (Streamable HTTP / SSE) is auto-configured by
+        # spring-ai-starter-mcp-server-webmvc using the Spring AI default MCP paths.
+        # stdio is disabled here and enabled only by the `stdio` profile.
+        stdio: false
+
+server:
+  port: 8080
+
+# ---------------------------------------------------------------------------
+# BroadWorks MCP configuration (all values externalized; see README env vars).
+# ---------------------------------------------------------------------------
+broadworks:
+  public:
+    base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+  application:
+    application-id: ${APPLICATION_ID:broadworks-mcp}
+  oidc:
+    issuer-uri: ${OIDC_ISSUER_URI:https://accounts.google.com}
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+  storage:
+    backend: ${STORAGE_BACKEND:DYNAMODB}
+    session-table: ${SESSION_TABLE:broadworks-mcp-sessions}
+    user-config-table: ${USER_CONFIG_TABLE:broadworks-mcp-user-config}
+    kms-key-id: ${KMS_KEY_ID:}
+    region: ${AWS_REGION:}
+  auth:
+    token:
+      access-token-ttl: ${ACCESS_TOKEN_TTL:PT1H}
+      refresh-token-ttl: ${REFRESH_TOKEN_TTL:P30D}
+      authorization-code-ttl: ${AUTH_CODE_TTL:PT5M}
+      pending-authorization-ttl: ${PENDING_AUTH_TTL:PT15M}
+      registered-client-ttl: ${REGISTERED_CLIENT_TTL:P90D}
+    redirect:
+      allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
+  alpaca:
+    connection-cache-ttl: ${ALPACA_CONNECTION_CACHE_TTL:PT30M}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO

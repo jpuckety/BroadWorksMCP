@@ -1,0 +1,20 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/broadworks-mcp.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk*.json", "node_modules", "cdk.out"]
+  },
+  "context": {
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
+    "applicationId": "broadworks-mcp",
+    "publicBaseUrl": "https://mcp.example.com",
+    "oauthRedirectAllowlist": "https://mcp.example.com",
+    "ssm": {
+      "googleClientId": "/broadworks-mcp/google-client-id",
+      "googleClientSecret": "/broadworks-mcp/google-client-secret",
+      "publicBaseUrl": "/broadworks-mcp/public-base-url"
+    }
+  }
+}
