@@ -33,6 +33,21 @@ ALPACA_PROFILE="install-alpaca"
 # Container image name used by the `docker-build` command.
 IMAGE_NAME="${IMAGE_NAME:-broadworks-mcp:latest}"
 
+# Container registry (ECR) configuration used by the `refresh-image` command.
+# The repository may be given either as a full URI via ECR_REPOSITORY_URI
+# (<account>.dkr.ecr.<region>.amazonaws.com/<name>) or as a bare name via
+# ECR_REPOSITORY (the registry host is then derived from the caller's account
+# and region). IMAGE_TAG is the tag pushed to ECR and pulled by the tasks.
+ECR_REPOSITORY="${ECR_REPOSITORY:-broadworks-mcp}"
+ECR_REPOSITORY_URI="${ECR_REPOSITORY_URI:-}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+# ECS cluster/service running the image. `refresh-image` forces a new deployment
+# on them so the tasks pull the freshly pushed image. When unset, the push still
+# happens but the service refresh is skipped (with a warning).
+ECS_CLUSTER="${ECS_CLUSTER:-}"
+ECS_SERVICE="${ECS_SERVICE:-}"
+
 # SSM SecureString parameter names for the Google OAuth secrets. These default
 # to the same paths the CDK app reads (see cdk/lib/broadworks-mcp-stack.ts) and
 # can be overridden to match a custom `ssm` CDK context.
@@ -175,6 +190,83 @@ cmd_docker_build() {
   log "Built image: ${IMAGE_NAME}"
 }
 
+# Resolve the AWS region for ECR/ECS calls, falling back to the configured
+# default when neither AWS_REGION nor AWS_DEFAULT_REGION is set.
+ecr_region() {
+  local region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+  if [[ -z "${region}" ]]; then
+    region="$(aws configure get region 2>/dev/null || true)"
+  fi
+  [[ -n "${region}" ]] || die "No AWS region set. Export AWS_REGION (or configure a default region) before refreshing the image."
+  printf '%s\n' "${region}"
+}
+
+# Resolve the fully-qualified ECR repository URI. Prefers ECR_REPOSITORY_URI
+# when given; otherwise derives <account>.dkr.ecr.<region>.amazonaws.com from the
+# caller's identity and appends the bare ECR_REPOSITORY name.
+resolve_ecr_repository_uri() {
+  if [[ -n "${ECR_REPOSITORY_URI}" ]]; then
+    printf '%s\n' "${ECR_REPOSITORY_URI}"
+    return 0
+  fi
+  local region account
+  region="$(ecr_region)"
+  account="$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)"
+  [[ -n "${account}" && "${account}" != "None" ]] || die "Unable to determine the AWS account id (aws sts get-caller-identity). Check your AWS credentials."
+  printf '%s.dkr.ecr.%s.amazonaws.com/%s\n' "${account}" "${region}" "${ECR_REPOSITORY}"
+}
+
+# Build the image, push it to ECR, and force a new ECS deployment so the running
+# tasks pull the freshly pushed tag.
+cmd_refresh_image() {
+  require docker
+  require aws
+
+  local region repo_uri registry repo_name remote
+  region="$(ecr_region)"
+  repo_uri="$(resolve_ecr_repository_uri)"
+  registry="${repo_uri%%/*}"
+  repo_name="${repo_uri##*/}"
+  remote="${repo_uri}:${IMAGE_TAG}"
+
+  # 1. Build the image locally (reuses IMAGE_NAME).
+  cmd_docker_build
+
+  # 2. Authenticate Docker to the ECR registry.
+  log "Logging in to ECR registry ${registry}..."
+  aws ecr get-login-password --region "${region}" \
+    | docker login --username AWS --password-stdin "${registry}"
+
+  # Create the repository on first push so a fresh account works out of the box.
+  if ! aws ecr describe-repositories --region "${region}" --repository-names "${repo_name}" >/dev/null 2>&1; then
+    log "Creating ECR repository '${repo_name}'..."
+    aws ecr create-repository --region "${region}" --repository-name "${repo_name}" >/dev/null
+  fi
+
+  # 3. Tag and push the image to ECR.
+  log "Tagging ${IMAGE_NAME} as ${remote}..."
+  docker tag "${IMAGE_NAME}" "${remote}"
+  log "Pushing ${remote}..."
+  docker push "${remote}"
+
+  # 4. Refresh the ECS service so tasks roll over to the new image.
+  if [[ -n "${ECS_CLUSTER}" && -n "${ECS_SERVICE}" ]]; then
+    log "Forcing a new deployment of ECS service '${ECS_SERVICE}' on cluster '${ECS_CLUSTER}'..."
+    aws ecs update-service \
+      --region "${region}" \
+      --cluster "${ECS_CLUSTER}" \
+      --service "${ECS_SERVICE}" \
+      --force-new-deployment \
+      >/dev/null
+    log "Deployment triggered. Tasks will roll over to ${remote}."
+  else
+    warn "ECS_CLUSTER and/or ECS_SERVICE not set — skipping the service refresh."
+    warn "Set them (e.g. ECS_CLUSTER=... ECS_SERVICE=... ./run.sh refresh-image) to force a rolling deployment."
+  fi
+
+  log "Done: built and pushed ${remote}."
+}
+
 # --------------------------------------------------------------------------
 # Secrets (SSM) action
 # --------------------------------------------------------------------------
@@ -299,6 +391,8 @@ Run locally:
 
 Container:
   docker-build     Build the container image from the Dockerfile (IMAGE_NAME env, default broadworks-mcp:latest).
+  refresh-image    Build the image, push it to ECR, and force a new ECS deployment
+                   (ECR_REPOSITORY/ECR_REPOSITORY_URI, IMAGE_TAG, ECS_CLUSTER, ECS_SERVICE).
 
 Secrets (AWS SSM):
   push-secrets     Push the Google OAuth secrets from .env (GOOGLE_CLIENT_ID/
@@ -313,7 +407,15 @@ Deploy (AWS CDK):
 
 Environment overrides:
   JAVA_HOME         JDK 21 to use for Maven/java.
-  IMAGE_NAME        Docker image tag for docker-build.
+  IMAGE_NAME        Docker image tag for docker-build (and the local build refresh-image pushes).
+  ECR_REPOSITORY    ECR repository name for refresh-image (default broadworks-mcp); the
+                    registry host is derived from your AWS account/region.
+  ECR_REPOSITORY_URI  Full ECR repository URI for refresh-image; overrides ECR_REPOSITORY
+                    (<account>.dkr.ecr.<region>.amazonaws.com/<name>).
+  IMAGE_TAG         Tag pushed to ECR by refresh-image (default latest).
+  ECS_CLUSTER, ECS_SERVICE
+                    ECS cluster/service refreshed by refresh-image via a forced
+                    new deployment (skipped with a warning when unset).
   CERTIFICATE_ARN   ACM certificate ARN for the HTTPS ALB listener (deploy/synth).
   AWS_REGION        AWS region targeted by push-secrets (passed as --region).
   SSM_GOOGLE_CLIENT_ID_PARAM, SSM_GOOGLE_CLIENT_SECRET_PARAM
@@ -358,6 +460,7 @@ main() {
     run|run-http|run_http)         cmd_run "$@" ;;
     run-stdio|run_stdio)           cmd_run_stdio "$@" ;;
     docker-build|docker_build)     cmd_docker_build "$@" ;;
+    refresh-image|refresh_image)   cmd_refresh_image "$@" ;;
     push-secrets|push_secrets)     cmd_push_secrets "$@" ;;
     cdk-install|cdk_install)       cmd_cdk_install "$@" ;;
     synth)                         cmd_synth "$@" ;;

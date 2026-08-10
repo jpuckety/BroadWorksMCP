@@ -9,8 +9,10 @@ spring:
       server:
         name: broadworks-mcp
         version: 0.1.0
-        # HTTP transport (Streamable HTTP / SSE) is auto-configured by
-        # spring-ai-starter-mcp-server-webmvc using the Spring AI default MCP paths.
+        # HTTP transport is auto-configured by spring-ai-starter-mcp-server-webmvc.
+        # As of Spring AI 1.1.x the default protocol is SSE, served at /sse (with the
+        # client message endpoint at /mcp/message). To expose the single streamable-HTTP
+        # endpoint at /mcp instead, set `spring.ai.mcp.server.protocol: STREAMABLE`.
         # stdio is disabled here and enabled only by the `stdio` profile.
         stdio: false
 

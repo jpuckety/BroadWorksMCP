@@ -23,7 +23,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Managed dependency versions -->
-        <spring-ai.version>1.0.0</spring-ai.version>
+        <spring-ai.version>1.1.8</spring-ai.version>
         <aws-sdk.version>2.29.29</aws-sdk.version>
         <testcontainers.version>1.20.4</testcontainers.version>
         <wiremock.version>3.9.2</wiremock.version>

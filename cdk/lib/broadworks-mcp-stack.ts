@@ -211,6 +211,17 @@ export class BroadWorksMcpStack extends cdk.Stack {
       interval: cdk.Duration.seconds(30),
     });
 
+    // Pin each client to a single task for the duration of a session (ALB-generated cookie).
+    // The interactive Google sign-in (Spring Security `oauth2Login` + Spring Authorization Server)
+    // is stateful: the transient OAuth2 authorization request, the `SecurityContext`, and the saved
+    // request are all held in the per-task in-memory HTTP session. With desiredCount > 1 and no
+    // stickiness, the ALB round-robins requests, so the `/oauth2/authorization/google` start and the
+    // `/login/oauth2/code/google` callback (plus the follow-up redirect back to `/oauth2/authorize`)
+    // can land on different tasks. The task handling the callback then has no saved authorization
+    // request / authenticated session, so the login fails and the browser is bounced back to Google
+    // (observably with `prompt=none`). Sticky sessions keep the whole handshake on one task.
+    service.targetGroup.enableCookieStickiness(cdk.Duration.hours(1));
+
     // ---- DNS records ------------------------------------------------------
     // Point the public hostname at the ALB via Route 53 alias records (IPv4 + IPv6). Requires a
     // resolvable hosted zone; without one the hostname must be wired to the ALB DNS name manually.
