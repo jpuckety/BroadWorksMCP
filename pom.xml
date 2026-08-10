@@ -241,7 +241,15 @@
             into the local Maven repository during the `initialize` phase.
             Equivalent to running scripts/install-alpaca.sh once.
 
-            Usage: mvn -Pinstall-alpaca clean verify
+            IMPORTANT: run this as its OWN invocation that stops at `initialize`,
+            BEFORE building. Combining it with a resolving phase in a single
+            invocation (e.g. `mvn -Pinstall-alpaca clean package`) fails on a
+            clean local repo, because Maven resolves the co.ecg:* compile
+            dependencies before this profile's install-file executions run.
+
+            Usage:
+              mvn -Pinstall-alpaca initialize   # populate the local repo, then
+              mvn -DskipTests clean package      # build against it
         -->
         <profile>
             <id>install-alpaca</id>

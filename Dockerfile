@@ -12,10 +12,21 @@ COPY pom.xml ./
 COPY lib/ ./lib/
 COPY scripts/ ./scripts/
 
-# Copy sources and build. The install-alpaca profile installs lib/*.jar during
-# the `initialize` phase, so the co.ecg:* dependencies resolve during packaging.
+# Install the local Alpaca toolkit JARs (lib/*.jar) into the local Maven
+# repository in a SEPARATE Maven invocation, BEFORE packaging.
+#
+# This MUST be its own `mvn` run that stops at the `initialize` phase. Running
+# the install-alpaca profile together with `package` in a single invocation
+# fails, because Maven resolves the co.ecg:* compile-scope dependencies for the
+# reactor before the profile's initialize-phase install-file executions have
+# populated the local repo, and a clean container has no other source for them
+# (hence "Could not find artifact co.ecg:alpaca-*:jar:... in central").
+RUN mvn -B -Pinstall-alpaca initialize
+
+# Copy sources and build. The co.ecg:* dependencies now resolve from the local
+# Maven repository populated above.
 COPY src/ ./src/
-RUN mvn -B -Pinstall-alpaca -DskipTests clean package
+RUN mvn -B -DskipTests clean package
 
 # ============================================================================
 # Runtime stage: minimal JRE 21 image running the repackaged jar.
