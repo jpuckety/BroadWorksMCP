@@ -127,6 +127,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | Variable | Default | Description |
 |---|---|---|
 | `PUBLIC_HOSTNAME` | *(empty)* | Public DNS hostname (no scheme/path), e.g. `mcp.example.com`. The base URL is built as `https://<hostname>` and used for discovery docs and the `resource_metadata` challenge. Empty locally → `http://localhost:8080`. |
+| `FORWARD_HEADERS_STRATEGY` | `framework` | How to honor `X-Forwarded-*` headers from the TLS-terminating ALB so request-derived URLs (e.g. the OAuth2 login callback `redirect_uri`) use the external `https` scheme. Set to `none` only when the app is not behind a trusted proxy. |
 | `OIDC_ISSUER_URI` | `https://accounts.google.com` | Upstream OIDC issuer. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth client id. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client secret. |

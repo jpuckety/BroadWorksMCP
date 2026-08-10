@@ -16,6 +16,11 @@ spring:
 
 server:
   port: 8080
+  # The app runs behind a TLS-terminating Application Load Balancer that forwards plain HTTP to the
+  # container while adding X-Forwarded-Proto/Port headers. Honor those headers so request-derived
+  # URLs (notably the OAuth2 login callback redirect_uri) are rebuilt with the external https scheme
+  # instead of the internal http scheme. See Spring Boot "Use Behind a Proxy Server" (server.forward-headers-strategy).
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:framework}
 
 # ---------------------------------------------------------------------------
 # BroadWorks MCP configuration (all values externalized; see README env vars).

@@ -29,18 +29,37 @@ import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
  * Step 4 decision. Clients and issued sessions are backed by the pluggable {@link SessionStore};
  * access tokens are opaque (REFERENCE). Unauthenticated browser hits on the authorize endpoint are
  * redirected to Google login.</p>
+ *
+ * <p>The authorization-server discovery document is customized to advertise the custom RFC 7591
+ * Dynamic Client Registration endpoint ({@code /oauth/register}). Without this, MCP clients that
+ * discover the server via RFC 8414 metadata cannot find where to register and therefore never reach
+ * the authorization endpoint that initiates the interactive Google login. The issuer is pinned to
+ * the configured public base URL so the advertised endpoints stay consistent with the protected
+ * resource metadata (RFC 9728) regardless of the request host (e.g. behind a proxy/load balancer).</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerConfig {
 
+    /** RFC 7591 Dynamic Client Registration path served by the custom controller. */
+    private static final String REGISTRATION_ENDPOINT_PATH = "/oauth/register";
+
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
-    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
+                                                                      PublicBaseUrlProperties publicBaseUrl)
+            throws Exception {
         final OAuth2AuthorizationServerConfigurer authorizationServer =
                 OAuth2AuthorizationServerConfigurer.authorizationServer();
+        final String registrationEndpoint = publicBaseUrl.baseUrl() + REGISTRATION_ENDPOINT_PATH;
         http
                 .securityMatcher(authorizationServer.getEndpointsMatcher())
-                .with(authorizationServer, server -> server.oidc(Customizer.withDefaults()))
+                .with(authorizationServer, server -> server
+                        .oidc(Customizer.withDefaults())
+                        // Advertise the custom dynamic client registration endpoint (RFC 7591) in the
+                        // RFC 8414 authorization-server metadata so MCP clients can register and proceed.
+                        .authorizationServerMetadataEndpoint(metadata -> metadata
+                                .authorizationServerMetadataCustomizer(builder -> builder
+                                        .clientRegistrationEndpoint(registrationEndpoint))))
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
                 // For browser clients hitting the authorize endpoint unauthenticated, start Google login.
                 .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
@@ -69,8 +88,12 @@ public class AuthorizationServerConfig {
 
     @Bean
     @ConditionalOnMissingBean(AuthorizationServerSettings.class)
-    public AuthorizationServerSettings authorizationServerSettings() {
-        // SAS default endpoints (Google/SAS defaults per updated Step 4 decision).
-        return AuthorizationServerSettings.builder().build();
+    public AuthorizationServerSettings authorizationServerSettings(PublicBaseUrlProperties publicBaseUrl) {
+        // SAS default endpoints (Google/SAS defaults per updated Step 4 decision). The issuer is pinned
+        // to the public base URL so discovery metadata advertises the externally reachable endpoints
+        // (consistent with the protected resource metadata) instead of the raw request host.
+        return AuthorizationServerSettings.builder()
+                .issuer(publicBaseUrl.baseUrl())
+                .build();
     }
 }
