@@ -20,4 +20,11 @@ new BroadWorksMcpStack(app, 'BroadWorksMcpStack', {
   // or the CERTIFICATE_ARN environment variable. If neither hostname nor certificate is given,
   // an HTTP-only listener is created (development only).
   certificateArn: app.node.tryGetContext('certificateArn') ?? process.env.CERTIFICATE_ARN,
+  // Route 53 hosted zone that owns the hostname. When provided, the stack creates the DNS alias
+  // records (hostname -> ALB) and DNS-validates the certificate automatically. When omitted, the
+  // zone name is derived from the hostname (mcp.example.com -> example.com). Provide via:
+  //   cdk deploy -c hostedZoneName=example.com [-c hostedZoneId=Z123...]
+  // or the HOSTED_ZONE_NAME / HOSTED_ZONE_ID environment variables.
+  hostedZoneName: app.node.tryGetContext('hostedZoneName') ?? process.env.HOSTED_ZONE_NAME,
+  hostedZoneId: app.node.tryGetContext('hostedZoneId') ?? process.env.HOSTED_ZONE_ID,
 });

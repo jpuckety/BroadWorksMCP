@@ -33,6 +33,12 @@ ALPACA_PROFILE="install-alpaca"
 # Container image name used by the `docker-build` command.
 IMAGE_NAME="${IMAGE_NAME:-broadworks-mcp:latest}"
 
+# SSM SecureString parameter names for the Google OAuth secrets. These default
+# to the same paths the CDK app reads (see cdk/lib/broadworks-mcp-stack.ts) and
+# can be overridden to match a custom `ssm` CDK context.
+SSM_GOOGLE_CLIENT_ID_PARAM="${SSM_GOOGLE_CLIENT_ID_PARAM:-/broadworks-mcp/google-client-id}"
+SSM_GOOGLE_CLIENT_SECRET_PARAM="${SSM_GOOGLE_CLIENT_SECRET_PARAM:-/broadworks-mcp/google-client-secret}"
+
 # Optional ACM certificate ARN for the HTTPS ALB listener. May also be passed
 # on the command line (see `deploy`). Falls back to the env var the CDK app
 # already understands.
@@ -170,6 +176,44 @@ cmd_docker_build() {
 }
 
 # --------------------------------------------------------------------------
+# Secrets (SSM) action
+# --------------------------------------------------------------------------
+# Push a single SSM SecureString parameter, overwriting any existing value.
+# Encrypts with the default SSM KMS key (aws/ssm); pass --region when AWS_REGION
+# is set so the parameter lands in the expected account/region.
+put_secure_param() {
+  local name="$1" value="$2"
+  local region_args=()
+  [[ -n "${AWS_REGION:-}" ]] && region_args=(--region "${AWS_REGION}")
+  aws ssm put-parameter \
+    "${region_args[@]+"${region_args[@]}"}" \
+    --name "${name}" \
+    --type SecureString \
+    --value "${value}" \
+    --overwrite \
+    >/dev/null
+  log "Pushed ${name}"
+}
+
+# Push the Google OAuth secrets from .env into SSM as SecureString parameters so
+# the deployed ECS task (which reads them via ecs.Secret.fromSsmParameter) picks
+# them up. Values are sourced from GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET, which
+# load_dotenv has already read from .env (env/inline values take precedence).
+cmd_push_secrets() {
+  require aws
+  local missing=()
+  [[ -n "${GOOGLE_CLIENT_ID:-}" ]]     || missing+=(GOOGLE_CLIENT_ID)
+  [[ -n "${GOOGLE_CLIENT_SECRET:-}" ]] || missing+=(GOOGLE_CLIENT_SECRET)
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    die "Missing required value(s): ${missing[*]}. Set them in ${ENV_FILE#${PROJECT_ROOT}/} (or the environment) before pushing."
+  fi
+  log "Pushing Google OAuth secrets from ${ENV_FILE#${PROJECT_ROOT}/} into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
+  put_secure_param "${SSM_GOOGLE_CLIENT_ID_PARAM}"     "${GOOGLE_CLIENT_ID}"
+  put_secure_param "${SSM_GOOGLE_CLIENT_SECRET_PARAM}" "${GOOGLE_CLIENT_SECRET}"
+  log "Done. Deploy (or restart the service) so the task picks up the new values."
+}
+
+# --------------------------------------------------------------------------
 # CDK (deploy / undeploy) actions
 # --------------------------------------------------------------------------
 cdk_run() {
@@ -256,6 +300,10 @@ Run locally:
 Container:
   docker-build     Build the container image from the Dockerfile (IMAGE_NAME env, default broadworks-mcp:latest).
 
+Secrets (AWS SSM):
+  push-secrets     Push the Google OAuth secrets from .env (GOOGLE_CLIENT_ID/
+                   GOOGLE_CLIENT_SECRET) into SSM as SecureString parameters.
+
 Deploy (AWS CDK):
   cdk-install      Install CDK Node dependencies (cdk/).
   synth            Synthesize the CloudFormation template.
@@ -267,6 +315,10 @@ Environment overrides:
   JAVA_HOME         JDK 21 to use for Maven/java.
   IMAGE_NAME        Docker image tag for docker-build.
   CERTIFICATE_ARN   ACM certificate ARN for the HTTPS ALB listener (deploy/synth).
+  AWS_REGION        AWS region targeted by push-secrets (passed as --region).
+  SSM_GOOGLE_CLIENT_ID_PARAM, SSM_GOOGLE_CLIENT_SECRET_PARAM
+                    SSM parameter names for push-secrets (default
+                    /broadworks-mcp/google-client-id and .../google-client-secret).
   PUBLIC_HOSTNAME   Public DNS hostname; the base URL is built as https://<hostname>
                     (unset locally -> http://localhost:8080).
   STORAGE_BACKEND, ...  Passed through to the local `run` command.
@@ -306,6 +358,7 @@ main() {
     run|run-http|run_http)         cmd_run "$@" ;;
     run-stdio|run_stdio)           cmd_run_stdio "$@" ;;
     docker-build|docker_build)     cmd_docker_build "$@" ;;
+    push-secrets|push_secrets)     cmd_push_secrets "$@" ;;
     cdk-install|cdk_install)       cmd_cdk_install "$@" ;;
     synth)                         cmd_synth "$@" ;;
     bootstrap)                     cmd_bootstrap "$@" ;;

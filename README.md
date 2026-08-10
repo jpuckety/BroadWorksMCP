@@ -201,6 +201,15 @@ SecureString-backed secrets injected as container env.
    aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
    ```
 
+   Or, if you already keep `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`,
+   push them straight into SSM (SecureString, overwriting any existing values):
+
+   ```bash
+   ./run.sh push-secrets
+   ```
+
+   Set `AWS_REGION` (e.g. in `.env`) to target a specific region.
+
 2. Deploy with the public hostname (build the image from the repo-root `Dockerfile` as a CDK
    asset). The hostname builds the server base URL (`https://<hostname>`) **and** provisions the
    ACM certificate for the HTTPS ALB listener:

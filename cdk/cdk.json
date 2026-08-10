@@ -8,9 +8,6 @@
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
-    "applicationId": "broadworks-mcp",
-    "hostname": "mcp.example.com",
-    "oauthRedirectAllowlist": "https://mcp.example.com",
     "ssm": {
       "googleClientId": "/broadworks-mcp/google-client-id",
       "googleClientSecret": "/broadworks-mcp/google-client-secret"
