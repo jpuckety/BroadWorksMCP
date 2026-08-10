@@ -17,13 +17,16 @@
                 <charset>${CONSOLE_LOG_CHARSET:-UTF-8}</charset>
             </encoder>
         </appender>
-        <root level="INFO">
+        <root level="DEBUG">
             <appender-ref ref="STDERR"/>
         </root>
     </springProfile>
 
     <springProfile name="!stdio">
         <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+        <logger name="com.broadworks.mcp" level="DEBUG"/>
+
         <root level="INFO">
             <appender-ref ref="CONSOLE"/>
         </root>
