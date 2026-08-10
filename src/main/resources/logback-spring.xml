@@ -26,6 +26,7 @@
         <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
         <logger name="com.broadworks.mcp" level="DEBUG"/>
+        <logger name="software.amazon.awssdk.auth.credentials" level="INFO" />
 
         <root level="INFO">
             <appender-ref ref="CONSOLE"/>

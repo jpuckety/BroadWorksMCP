@@ -71,7 +71,3 @@ management:
     health:
       probes:
         enabled: true
-
-logging:
-  level:
-    root: DEBUG
