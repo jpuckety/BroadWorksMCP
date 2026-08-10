@@ -48,8 +48,10 @@ public class SecurityConfig {
     @Order(2)
     public SecurityFilterChain appSecurityFilterChain(HttpSecurity http,
                                                       OpaqueTokenIntrospector opaqueTokenIntrospector,
-                                                      BearerChallengeEntryPoint bearerChallengeEntryPoint)
+                                                      BearerChallengeEntryPoint bearerChallengeEntryPoint,
+                                                      PublicBaseUrlProperties publicBaseUrl)
             throws Exception {
+        final String baseUrl = publicBaseUrl.baseUrl();
         http
                 .securityMatcher("/**")
                 .authorizeHttpRequests(authorize -> authorize
@@ -57,7 +59,18 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .authenticationEntryPoint(bearerChallengeEntryPoint)
-                        .opaqueToken(opaque -> opaque.introspector(opaqueTokenIntrospector)))
+                        .opaqueToken(opaque -> opaque.introspector(opaqueTokenIntrospector))
+                        // Spring Security 7 publishes RFC 9728 protected-resource metadata at
+                        // /.well-known/oauth-protected-resource itself. Customize it to advertise this
+                        // server as the resource and point clients at the authorization server (issuer),
+                        // pinned to the external base URL. Replaces the previous custom controller.
+                        .protectedResourceMetadata(metadata -> metadata
+                                .protectedResourceMetadataCustomizer(builder -> builder
+                                        .resource(baseUrl)
+                                        .authorizationServer(baseUrl)
+                                        .scope("openid")
+                                        .scope("email")
+                                        .scope("profile"))))
                 .oauth2Login(Customizer.withDefaults())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(bearerChallengeEntryPoint))

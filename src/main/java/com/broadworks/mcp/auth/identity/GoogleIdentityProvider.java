@@ -13,8 +13,8 @@ import java.util.StringJoiner;
 
 import com.broadworks.mcp.config.OidcProperties;
 import com.broadworks.mcp.config.PublicBaseUrlProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;

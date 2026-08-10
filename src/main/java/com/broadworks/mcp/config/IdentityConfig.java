@@ -5,7 +5,7 @@ import java.time.Duration;
 
 import com.broadworks.mcp.auth.identity.GoogleIdentityProvider;
 import com.broadworks.mcp.auth.identity.IdentityProvider;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;

@@ -15,7 +15,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
@@ -49,7 +49,7 @@ public class AuthorizationServerConfig {
                                                                       PublicBaseUrlProperties publicBaseUrl)
             throws Exception {
         final OAuth2AuthorizationServerConfigurer authorizationServer =
-                OAuth2AuthorizationServerConfigurer.authorizationServer();
+                new OAuth2AuthorizationServerConfigurer();
         final String registrationEndpoint = publicBaseUrl.baseUrl() + REGISTRATION_ENDPOINT_PATH;
         http
                 .securityMatcher(authorizationServer.getEndpointsMatcher())

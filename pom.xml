@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.1</version>
+        <version>4.1.0</version>
         <relativePath/>
     </parent>
 
@@ -23,10 +23,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Managed dependency versions -->
-        <spring-ai.version>1.1.8</spring-ai.version>
-        <aws-sdk.version>2.29.29</aws-sdk.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
-        <wiremock.version>3.9.2</wiremock.version>
+        <spring-ai.version>2.0.0</spring-ai.version>
+        <aws-sdk.version>2.51.4</aws-sdk.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
+        <wiremock.version>3.13.2</wiremock.version>
 
         <!-- Alpaca toolkit (installed from lib/ via scripts/install-alpaca.sh) -->
         <alpaca.version>12.2.0-RELEASE</alpaca.version>
@@ -79,9 +79,16 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!--
+            Use the Spring Boot starter (not the raw spring-security-oauth2-authorization-server)
+            so the authorization-server autoconfiguration is present. In Spring Boot 4 this
+            autoconfiguration (which supplies the JwtDecoder / JWKSource required by the OIDC-enabled
+            authorization server) was moved out of spring-boot-autoconfigure into its own module,
+            pulled in transitively by this starter.
+        -->
         <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-oauth2-authorization-server</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-authorization-server</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -100,6 +107,16 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!--
+            Spring Framework 7 (Spring Boot 4) removed the bundled spring-jcl bridge, so the
+            commons-logging API (org.apache.commons.logging.*) used by Spring and Spring Security
+            (e.g. NimbusJwtDecoder) is no longer on the classpath. Provide it via the SLF4J bridge
+            so JCL logging is routed through the existing Logback setup. Version managed by the BOM.
+        -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>jcl-over-slf4j</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -152,6 +169,15 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Spring Boot 4 modularized MockMvc test support out of spring-boot-starter-test.
+            @AutoConfigureMockMvc / MockMvc auto-configuration now live in this module.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
@@ -171,6 +197,18 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>localstack</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            The Alpaca generated request classes reference the legacy javax.validation API in their
+            method signatures. Mockito/Byte Buddy must resolve those types to mock the (final)
+            classes, so the javax.validation API must be present on the test classpath. Jakarta
+            (jakarta.validation) is a different namespace and does not satisfy these references.
+        -->
+        <dependency>
+            <groupId>javax.validation</groupId>
+            <artifactId>validation-api</artifactId>
+            <version>2.0.1.Final</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
