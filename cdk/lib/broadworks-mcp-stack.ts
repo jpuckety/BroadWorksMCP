@@ -13,7 +13,16 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 
 export interface BroadWorksMcpStackProps extends cdk.StackProps {
-  /** ARN of the ACM certificate for the HTTPS ALB listener. */
+  /**
+   * Public DNS hostname (e.g. mcp.example.com) used to build the server's base URL and to
+   * provision the ACM certificate for the HTTPS ALB listener. May also be supplied via the
+   * `hostname` CDK context value.
+   */
+  readonly hostname?: string;
+  /**
+   * ARN of an existing ACM certificate for the HTTPS ALB listener. When omitted, a certificate is
+   * created from {@link hostname}. Provide this to reuse a pre-validated certificate instead.
+   */
   readonly certificateArn?: string;
 }
 
@@ -29,6 +38,9 @@ export class BroadWorksMcpStack extends cdk.Stack {
     const applicationId = this.node.tryGetContext('applicationId') ?? 'broadworks-mcp';
     const oauthRedirectAllowlist = this.node.tryGetContext('oauthRedirectAllowlist') ?? '';
     const ssmNames = this.node.tryGetContext('ssm') ?? {};
+
+    // Public hostname drives both the app's base URL (https://<hostname>) and the ACM certificate.
+    const hostname: string | undefined = props.hostname ?? this.node.tryGetContext('hostname');
 
     // ---- Networking -------------------------------------------------------
     const vpc = new ec2.Vpc(this, 'Vpc', { maxAzs: 2, natGateways: 1 });
@@ -79,9 +91,6 @@ export class BroadWorksMcpStack extends cdk.Stack {
     const googleClientSecret = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'GoogleClientSecret', {
       parameterName: ssmNames.googleClientSecret ?? '/broadworks-mcp/google-client-secret',
     });
-    const publicBaseUrl = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'PublicBaseUrl', {
-      parameterName: ssmNames.publicBaseUrl ?? '/broadworks-mcp/public-base-url',
-    });
 
     // ---- Container image (built from the repo root Dockerfile) ------------
     const image = ecs.ContainerImage.fromAsset(path.join(__dirname, '..', '..'), {
@@ -95,9 +104,17 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     const cluster = new ecs.Cluster(this, 'Cluster', { vpc, containerInsights: true });
 
-    const certificate = props.certificateArn
-      ? acm.Certificate.fromCertificateArn(this, 'Certificate', props.certificateArn)
-      : undefined;
+    // Prefer an explicitly provided certificate ARN; otherwise create a certificate from the
+    // hostname (DNS-validated). Without either, the ALB falls back to HTTP (development only).
+    let certificate: acm.ICertificate | undefined;
+    if (props.certificateArn) {
+      certificate = acm.Certificate.fromCertificateArn(this, 'Certificate', props.certificateArn);
+    } else if (hostname) {
+      certificate = new acm.Certificate(this, 'Certificate', {
+        domainName: hostname,
+        validation: acm.CertificateValidation.fromDns(),
+      });
+    }
 
     // ---- Fargate service behind an ALB ------------------------------------
     const service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, 'Service', {
@@ -124,11 +141,11 @@ export class BroadWorksMcpStack extends cdk.Stack {
           KMS_KEY_ID: dataKey.keyId,
           AWS_REGION: this.region,
           OAUTH_REDIRECT_ALLOWLIST: oauthRedirectAllowlist,
+          PUBLIC_HOSTNAME: hostname ?? '',
         },
         secrets: {
           GOOGLE_CLIENT_ID: ecs.Secret.fromSsmParameter(googleClientId),
           GOOGLE_CLIENT_SECRET: ecs.Secret.fromSsmParameter(googleClientSecret),
-          PUBLIC_BASE_URL: ecs.Secret.fromSsmParameter(publicBaseUrl),
         },
       },
     });
@@ -156,7 +173,8 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     if (!certificate) {
       cdk.Annotations.of(this).addWarning(
-        'No ACM certificate provided: the ALB listens on HTTP only. Provide -c certificateArn=... for HTTPS in production.',
+        'No hostname or certificate provided: the ALB listens on HTTP only. Provide -c hostname=mcp.example.com ' +
+          '(to create a certificate) or -c certificateArn=... for HTTPS in production.',
       );
     }
   }

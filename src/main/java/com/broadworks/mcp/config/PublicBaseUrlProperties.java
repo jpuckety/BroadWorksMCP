@@ -3,34 +3,61 @@ package com.broadworks.mcp.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * The externally reachable base URL of this server.
+ * The externally reachable public hostname of this server, from which the base URL is built.
  *
- * <p>Used to build the OAuth callback URI ({@code <baseUrl>/oauth/callback}), the issuer identifier
- * in discovery documents, and the {@code resource_metadata} URL in the {@code WWW-Authenticate}
- * challenge. Must be an HTTPS URL in production.</p>
+ * <p>The base URL is {@code https://<hostname>}. It is used to build the OAuth callback URI
+ * ({@code <baseUrl>/oauth/callback}), the issuer identifier in discovery documents, and the
+ * {@code resource_metadata} URL in the {@code WWW-Authenticate} challenge.</p>
  *
- * @param baseUrl fully-qualified base URL without a trailing slash, e.g.
- *                {@code https://mcp.example.com}.
+ * <p>When no hostname is configured (local development) the base URL defaults to
+ * {@link #DEFAULT_BASE_URL}.</p>
+ *
+ * @param hostname the public DNS hostname without scheme or path, e.g. {@code mcp.example.com}.
  */
 @ConfigurationProperties(prefix = "broadworks.public")
 public record PublicBaseUrlProperties(
-        String baseUrl
+        String hostname
 ) {
-    /** Default base URL for local HTTP development. */
+    /** Default base URL for local HTTP development (used when no hostname is configured). */
     public static final String DEFAULT_BASE_URL = "http://localhost:8080";
 
     public PublicBaseUrlProperties {
-        if (baseUrl == null || baseUrl.isBlank()) {
-            baseUrl = DEFAULT_BASE_URL;
+        hostname = normalizeHostname(hostname);
+    }
+
+    /**
+     * Reduce the configured value to a bare {@code host[:port]}: tolerate a full URL or leading
+     * scheme by stripping it, and drop any path/trailing slash.
+     */
+    private static String normalizeHostname(String value) {
+        if (value == null) {
+            return "";
         }
-        // Normalize: strip any trailing slash so callers can safely concatenate paths.
-        while (baseUrl.endsWith("/")) {
-            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        String host = value.trim();
+        final int scheme = host.indexOf("://");
+        if (scheme >= 0) {
+            host = host.substring(scheme + 3);
         }
+        final int slash = host.indexOf('/');
+        if (slash >= 0) {
+            host = host.substring(0, slash);
+        }
+        return host;
+    }
+
+    /**
+     * The externally reachable base URL, without a trailing slash. Built as
+     * {@code https://<hostname>}, or {@link #DEFAULT_BASE_URL} when no hostname is configured.
+     */
+    public String baseUrl() {
+        if (hostname == null || hostname.isBlank()) {
+            return DEFAULT_BASE_URL;
+        }
+        return "https://" + hostname;
     }
 
     /** The full OAuth callback URI ({@code <baseUrl>/oauth/callback}). */
     public String callbackUri() {
-        return baseUrl + "/oauth/callback";
+        return baseUrl() + "/oauth/callback";
     }
 }

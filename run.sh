@@ -21,6 +21,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}"
 CDK_DIR="${PROJECT_ROOT}/cdk"
 
+# Local, git-ignored file holding per-developer environment overrides and
+# secrets (e.g. GOOGLE_CLIENT_ID/SECRET, PUBLIC_HOSTNAME, KMS_KEY_ID). See
+# .env.example for the full list. Override the location with ENV_FILE=... .
+ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+
 # The Maven profile that installs the Alpaca toolkit JARs from lib/ during the
 # build. Applied to every Maven build target below.
 ALPACA_PROFILE="install-alpaca"
@@ -49,6 +54,48 @@ die()  { printf '\033[1;31m[run]\033[0m %s\n' "$*" >&2; exit 1; }
 
 require() {
   command -v "$1" >/dev/null 2>&1 || die "Required command '$1' is not installed or not on PATH."
+}
+
+# Load KEY=VALUE pairs from a .env file into the environment. Lines may be
+# blank, comments (starting with '#'), or optionally prefixed with 'export '.
+# Values may be optionally wrapped in single or double quotes. Variables that
+# are already set in the environment take precedence and are NOT overwritten,
+# so callers can still override anything on the command line.
+load_dotenv() {
+  local file="$1"
+  [[ -f "${file}" ]] || return 0
+  log "Loading environment variables from ${file#${PROJECT_ROOT}/}"
+  local line key value
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Trim leading/trailing whitespace.
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    # Skip blank lines and comments.
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    # Allow an optional leading 'export '.
+    line="${line#export }"
+    # Must look like KEY=VALUE.
+    [[ "${line}" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    # Trim whitespace around the key.
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    # Only accept valid shell identifiers.
+    [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # Trim whitespace around the (still unquoted) value; quoted values keep
+    # their inner whitespace because the quotes are stripped afterwards.
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    # Strip a single pair of surrounding quotes from the value.
+    if [[ ( "${value}" == \"*\" || "${value}" == \'*\' ) && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    # Do not clobber values already present in the environment.
+    if [[ -z "${!key:-}" ]]; then
+      export "${key}=${value}"
+    fi
+  done < "${file}"
 }
 
 mvn_build() {
@@ -100,8 +147,8 @@ cmd_run() {
   require java
   local jar; jar="$(resolve_jar)"
   log "Starting HTTP MCP server (in-memory storage) on :8080 ..."
+  # No PUBLIC_HOSTNAME locally: the app defaults its base URL to http://localhost:8080.
   STORAGE_BACKEND="${STORAGE_BACKEND:-IN_MEMORY}" \
-  PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:8080}" \
     java -jar "${jar}" "$@"
 }
 
@@ -148,7 +195,7 @@ cdk_cert_args() {
 cmd_synth() {
   log "Synthesizing the CloudFormation template..."
   local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
-  cdk_run synth "${args[@]}" "$@"
+  cdk_run synth "${args[@]+"${args[@]}"}" "$@"
 }
 
 cmd_bootstrap() {
@@ -168,7 +215,7 @@ cmd_deploy() {
   fi
   log "Deploying the BroadWorksMcpStack (builds the Docker image as a CDK asset)..."
   local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
-  cdk_run deploy "${args[@]}" "$@"
+  cdk_run deploy "${args[@]+"${args[@]}"}" "$@"
 }
 
 cmd_undeploy() {
@@ -220,7 +267,15 @@ Environment overrides:
   JAVA_HOME         JDK 21 to use for Maven/java.
   IMAGE_NAME        Docker image tag for docker-build.
   CERTIFICATE_ARN   ACM certificate ARN for the HTTPS ALB listener (deploy/synth).
-  STORAGE_BACKEND, PUBLIC_BASE_URL, ...  Passed through to the local `run` command.
+  PUBLIC_HOSTNAME   Public DNS hostname; the base URL is built as https://<hostname>
+                    (unset locally -> http://localhost:8080).
+  STORAGE_BACKEND, ...  Passed through to the local `run` command.
+
+Configuration file:
+  .env              Optional, git-ignored KEY=VALUE file at the repo root loaded
+                    automatically on every command. Values already set in the
+                    environment take precedence. Override its path with ENV_FILE=...
+                    See .env.example for the supported variables.
 
 Any extra args after the command are forwarded to the underlying tool
 (e.g. './run.sh test -Dtest=OpaqueTokenFactoryTest' or './run.sh deploy --require-approval never').
@@ -231,6 +286,13 @@ EOF
 # Dispatch
 # --------------------------------------------------------------------------
 main() {
+  # Read per-developer overrides/secrets from .env (if present) before doing
+  # anything else, so every command below sees them. Values already exported
+  # in the environment (or passed inline) still take precedence.
+  load_dotenv "${ENV_FILE}"
+  # Re-honor JAVA_HOME in case it was provided via .env.
+  [[ -n "${JAVA_HOME:-}" ]] && export JAVA_HOME
+
   local cmd="${1:-help}"
   [[ $# -gt 0 ]] && shift || true
 

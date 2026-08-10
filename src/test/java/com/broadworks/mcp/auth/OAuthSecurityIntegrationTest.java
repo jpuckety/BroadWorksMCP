@@ -27,8 +27,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * surface and Resource-Server bearer enforcement. No Google or BroadWorks network calls are made.
  */
 @SpringBootTest(properties = {
-        "broadworks.storage.backend=IN_MEMORY",
-        "broadworks.public.base-url=http://localhost:8080"
+        "broadworks.storage.backend=IN_MEMORY"
+        // No broadworks.public.hostname: the base URL defaults to http://localhost:8080.
 })
 @AutoConfigureMockMvc
 class OAuthSecurityIntegrationTest {

@@ -1,0 +1,5 @@
+# Files hidden from the AI agent / assistant.
+# Local environment file loaded by run.sh; may contain secrets.
+.env
+.env.*
+!.env.example

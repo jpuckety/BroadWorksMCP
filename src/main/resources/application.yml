@@ -22,7 +22,10 @@ server:
 # ---------------------------------------------------------------------------
 broadworks:
   public:
-    base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+    # Public DNS hostname (no scheme/path), e.g. mcp.example.com. The base URL is
+    # built as https://<hostname>. Leave empty for local dev (defaults to
+    # http://localhost:8080).
+    hostname: ${PUBLIC_HOSTNAME:}
   application:
     application-id: ${APPLICATION_ID:broadworks-mcp}
   oidc:

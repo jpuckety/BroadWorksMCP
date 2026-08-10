@@ -202,6 +202,24 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
+            <!--
+                Mockito's inline mock maker rewrites bytecode via Byte Buddy to
+                mock the (final) Alpaca generated classes. When the test JVM is a
+                JDK newer than the bundled Byte Buddy officially supports (e.g.
+                JDK 26), Byte Buddy refuses to instrument classes and the mocks
+                fail with "Mockito cannot mock this class ... Could not modify all
+                classes". Enabling Byte Buddy's experimental mode makes it treat
+                such newer JDKs as the latest known version, restoring mocking.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <net.bytebuddy.experimental>true</net.bytebuddy.experimental>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

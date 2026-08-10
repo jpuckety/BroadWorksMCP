@@ -1,0 +1,23 @@
+# Keep the CDK asset staging output out of the Docker build context.
+# The CDK app stages the image asset into cdk/cdk.out, which lives *inside*
+# the repo-root build context; without this exclusion the asset copy recurses
+# into itself and fails with ENAMETOOLONG.
+cdk/cdk.out/
+cdk/node_modules/
+cdk/*.js
+cdk/*.d.ts
+
+# Node / CDK
+node_modules/
+
+# Maven build output
+target/
+
+# Git / IDE / OS noise
+.git/
+.idea/
+*.iml
+.DS_Store
+
+# Logs
+*.log

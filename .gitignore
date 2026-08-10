@@ -7,6 +7,12 @@ node_modules/
 cdk.out/
 *.js.map
 
+# ===== Local environment / secrets =====
+# Loaded by run.sh; may contain secrets. Keep .env.example tracked.
+.env
+.env.*
+!.env.example
+
 # ===== Logs & temp =====
 *.log
 

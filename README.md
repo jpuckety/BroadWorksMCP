@@ -82,7 +82,8 @@ mvn -Pinstall-alpaca clean verify
 > **Tip:** the repo-root `run.sh` wraps the common build and deploy/undeploy
 > actions. Run `./run.sh help` for the full list; e.g. `./run.sh all`
 > (install-alpaca + verify), `./run.sh build`, `./run.sh test`, `./run.sh run`,
-> `./run.sh deploy <certArn>`, `./run.sh undeploy`.
+> `./run.sh deploy` (set `PUBLIC_HOSTNAME` in `.env` to build the URL and the
+> certificate), `./run.sh undeploy`.
 
 - Unit tests cover the token factory, both stores, encryption, ID-token verification, and the MCP
   tools.
@@ -101,9 +102,10 @@ No real Google or BroadWorks network calls are ever made in tests.
 
 ```bash
 STORAGE_BACKEND=IN_MEMORY \
-PUBLIC_BASE_URL=http://localhost:8080 \
 java -jar target/broadworks-mcp-*.jar
 ```
+
+(No `PUBLIC_HOSTNAME` locally: the base URL defaults to `http://localhost:8080`.)
 
 - Health: `GET http://localhost:8080/actuator/health`
 - AS metadata: `GET http://localhost:8080/.well-known/oauth-authorization-server`
@@ -124,7 +126,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 
 | Variable | Default | Description |
 |---|---|---|
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | Externally reachable base URL; used for discovery docs and the `resource_metadata` challenge. HTTPS in production. |
+| `PUBLIC_HOSTNAME` | *(empty)* | Public DNS hostname (no scheme/path), e.g. `mcp.example.com`. The base URL is built as `https://<hostname>` and used for discovery docs and the `resource_metadata` challenge. Empty locally → `http://localhost:8080`. |
 | `OIDC_ISSUER_URI` | `https://accounts.google.com` | Upstream OIDC issuer. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth client id. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client secret. |
@@ -149,7 +151,7 @@ All values are externalized; there are no secrets or magic numbers in code.
 ## End-to-end auth flow
 
 1. An unauthenticated MCP call returns **401** with
-   `WWW-Authenticate: Bearer realm="mcp", resource_metadata="<PUBLIC_BASE_URL>/.well-known/oauth-protected-resource"`.
+   `WWW-Authenticate: Bearer realm="mcp", resource_metadata="https://<hostname>/.well-known/oauth-protected-resource"`.
 2. The client performs **Dynamic Client Registration** (`POST /oauth/register`, public client, no
    secret), then an OAuth 2.1 **authorization-code + PKCE (S256)** flow at `/oauth2/authorize`.
 3. The AS redirects to **Google**; on the callback the Google **ID token is verified** (JWKS
@@ -197,18 +199,23 @@ SecureString-backed secrets injected as container env.
    ```bash
    aws ssm put-parameter --name /broadworks-mcp/google-client-id     --type SecureString --value "<client-id>"
    aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
-   aws ssm put-parameter --name /broadworks-mcp/public-base-url       --type SecureString --value "https://mcp.example.com"
    ```
 
-2. Deploy (build the image from the repo-root `Dockerfile` as a CDK asset):
+2. Deploy with the public hostname (build the image from the repo-root `Dockerfile` as a CDK
+   asset). The hostname builds the server base URL (`https://<hostname>`) **and** provisions the
+   ACM certificate for the HTTPS ALB listener:
 
    ```bash
    cd cdk
    npm install
-   npx cdk deploy -c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>
+   npx cdk deploy -c hostname=mcp.example.com
    ```
 
-   Without `certificateArn` the ALB listens on HTTP only (development).
+   The certificate is DNS-validated: after `deploy` starts, add the CNAME record ACM shows in the
+   console (or point `hostname` at a Route 53 zone in this account) so validation can complete.
+   To reuse an existing, already-validated certificate instead, pass
+   `-c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>`. Without either a `hostname` or
+   a `certificateArn`, the ALB listens on HTTP only (development).
 
 ---
 
