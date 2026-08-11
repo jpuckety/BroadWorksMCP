@@ -82,7 +82,40 @@ export class BroadWorksMcpStack extends cdk.Stack {
     }
 
     // ---- Networking -------------------------------------------------------
-    const vpc = new ec2.Vpc(this, 'Vpc', { maxAzs: 2, natGateways: 1 });
+    // Allocate a fixed Elastic IP for the NAT gateway so the ECS tasks' outbound public IP is
+    // stable across deploys and NAT gateway replacements. Downstream systems (e.g. the BroadWorks
+    // OCI/provisioning endpoints) can then safely allowlist this single, unchanging address.
+    const natEip = new ec2.CfnEIP(this, 'NatGatewayEip', {
+      domain: 'vpc',
+      tags: [{ key: 'Name', value: 'broadworks-mcp-nat' }],
+    });
+
+    // Provision the VPC's NAT gateway with the fixed Elastic IP above (one EIP per NAT gateway).
+    const natGatewayProvider = ec2.NatProvider.gateway({
+      eipAllocationIds: [natEip.attrAllocationId],
+    });
+
+    // Two-tier subnet layout: public subnets host the NAT gateway (and the internet-facing ALB),
+    // while the ECS Fargate tasks live in private subnets whose only route to the internet is
+    // through the NAT gateway. This keeps the tasks unreachable from the public internet while
+    // still allowing outbound traffic via the fixed Elastic IP.
+    const vpc = new ec2.Vpc(this, 'Vpc', {
+      maxAzs: 2,
+      natGateways: 1,
+      natGatewayProvider,
+      subnetConfiguration: [
+        {
+          name: 'public',
+          subnetType: ec2.SubnetType.PUBLIC,
+          cidrMask: 24,
+        },
+        {
+          name: 'private',
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          cidrMask: 24,
+        },
+      ],
+    });
 
     // ---- Customer-managed KMS key (secret encryption at rest) -------------
     const dataKey = new kms.Key(this, 'DataKey', {
@@ -177,6 +210,11 @@ export class BroadWorksMcpStack extends cdk.Stack {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
       publicLoadBalancer: true,
+      // Run the tasks in the private subnets with no public IP so their only outbound path is
+      // through the NAT gateway (and its fixed Elastic IP). The public ALB still reaches them via
+      // the VPC-internal target group.
+      taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      assignPublicIp: false,
       protocol: certificate ? elbv2.ApplicationProtocol.HTTPS : elbv2.ApplicationProtocol.HTTP,
       certificate,
       redirectHTTP: certificate !== undefined,
@@ -259,6 +297,10 @@ export class BroadWorksMcpStack extends cdk.Stack {
         description: 'Public URL served by the Route 53 alias record pointing at the ALB',
       });
     }
+    new cdk.CfnOutput(this, 'NatGatewayEipAddress', {
+      value: natEip.ref,
+      description: 'Fixed Elastic IP for the NAT gateway (stable outbound public IP of the ECS tasks)',
+    });
     new cdk.CfnOutput(this, 'SessionsTableName', { value: sessionsTable.tableName });
     new cdk.CfnOutput(this, 'UserConfigTableName', { value: userConfigTable.tableName });
     new cdk.CfnOutput(this, 'KmsKeyId', { value: dataKey.keyId });

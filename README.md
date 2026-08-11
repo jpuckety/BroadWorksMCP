@@ -144,6 +144,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `PENDING_AUTH_TTL` | `PT15M` | Pending-authorization state lifetime. |
 | `REGISTERED_CLIENT_TTL` | `P90D` | Registered (DCR) client lifetime. |
 | `ALPACA_CONNECTION_CACHE_TTL` | `PT30M` | Idle lifetime of a cached BroadWorks connection. |
+| `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). |
 
 All values are externalized; there are no secrets or magic numbers in code.
 
@@ -233,11 +234,17 @@ SecureString-backed secrets injected as container env.
 
 - **In-memory storage is non-durable and single-node**: sessions/clients/resources are lost on
   restart and not shared across replicas. Use `STORAGE_BACKEND=DYNAMODB` for production.
+- **Alpaca licensing** is provided by the bundled `co.ecg:ecg-licensing` runtime (installed from
+  `lib/` by the `install-alpaca` profile / `scripts/install-alpaca.sh`). The license can be supplied
+  inline as a string via `ALPACA_LICENSE_KEY` (`.env`), which is loaded into the licensing runtime at
+  connection time — no on-disk license file is required (the jar ships its own GPG key ring). An
+  invalid key fails fast with a safe error. When the variable is empty the license is left to the
+  provisioned runtime (license file / license manager).
 - **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery,
-  which requires the toolkit's runtime companions (`org.apache.jcs:jcs` and `co.ecg:ecg-licensing`)
-  on the classpath plus a reachable BroadWorks OCI server. These are provisioned in the deployment
-  environment; when absent the connection factory fails fast with a safe error **after** resolving
-  and validating the per-tenant resource. All per-tenant resolution, argument mapping, and response
-  handling are exercised independently of a live server.
+  which additionally requires the toolkit's runtime companion (`org.apache.jcs:jcs`) on the classpath
+  plus a reachable BroadWorks OCI server. These are provisioned in the deployment environment; when
+  absent the connection factory fails fast with a safe error **after** resolving and validating the
+  per-tenant resource. All per-tenant resolution, argument mapping, and response handling are
+  exercised independently of a live server.
 - **Security**: PKCE (S256) is mandatory; DCR issues public clients only; secrets are KMS-encrypted
   at rest; tokens, passwords, and protocol bodies are never logged.

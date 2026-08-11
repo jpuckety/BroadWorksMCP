@@ -24,21 +24,21 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LIB_DIR="${PROJECT_ROOT}/lib"
 
 GROUP_ID="co.ecg"
-VERSION="12.2.0-RELEASE"
 
-# artifactId -> jar file name (build-suffixed file names normalized to VERSION)
+# artifactId:version:jar-file-name
+# (the ecg-licensing runtime companion is versioned independently of the toolkit)
 declare -a ARTIFACTS=(
-  "alpaca-commons:alpaca-commons-12.2.0-RELEASE.jar"
-  "alpaca-model:alpaca-model-12.2.0-RELEASE.jar"
-  "alpaca-core:alpaca-core-12.2.0-RELEASE-26.jar"
-  "alpaca-library:alpaca-library-12.2.0-RELEASE-26.jar"
+  "alpaca-commons:12.2.0-RELEASE:alpaca-commons-12.2.0-RELEASE.jar"
+  "alpaca-model:12.2.0-RELEASE:alpaca-model-12.2.0-RELEASE.jar"
+  "alpaca-core:12.2.0-RELEASE:alpaca-core-12.2.0-RELEASE-26.jar"
+  "alpaca-library:12.2.0-RELEASE:alpaca-library-12.2.0-RELEASE-26.jar"
+  "ecg-licensing:6.2.0-RELEASE:ecg-licensing-6.2.0-RELEASE.jar"
 )
 
 echo "Installing Alpaca toolkit JARs from ${LIB_DIR} into the local Maven repository..."
 
 for entry in "${ARTIFACTS[@]}"; do
-  artifact_id="${entry%%:*}"
-  jar_file="${entry##*:}"
+  IFS=':' read -r artifact_id version jar_file <<< "${entry}"
   jar_path="${LIB_DIR}/${jar_file}"
 
   if [[ ! -f "${jar_path}" ]]; then
@@ -47,14 +47,14 @@ for entry in "${ARTIFACTS[@]}"; do
     exit 1
   fi
 
-  echo "  -> ${GROUP_ID}:${artifact_id}:${VERSION}  (${jar_file})"
+  echo "  -> ${GROUP_ID}:${artifact_id}:${version}  (${jar_file})"
   mvn -q org.apache.maven.plugins:maven-install-plugin:3.1.2:install-file \
     -Dfile="${jar_path}" \
     -DgroupId="${GROUP_ID}" \
     -DartifactId="${artifact_id}" \
-    -Dversion="${VERSION}" \
+    -Dversion="${version}" \
     -Dpackaging=jar \
     -DgeneratePom=true
 done
 
-echo "Done. Alpaca toolkit artifacts are now available at ${GROUP_ID}:*:${VERSION}."
+echo "Done. Alpaca toolkit artifacts are now available under ${GROUP_ID}:*."

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.broadworks.mcp.auth.store.AlpacaResource;
 import com.broadworks.mcp.auth.store.ResourceStore;
@@ -14,6 +15,7 @@ import com.broadworks.mcp.config.AlpacaProperties;
 import co.ecg.alpaca.toolkit.LibraryProperties;
 import co.ecg.alpaca.toolkit.model.BroadWorksLoginType;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
+import co.ecg.licensing.ECGLicense;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -23,13 +25,18 @@ import lombok.extern.slf4j.Slf4j;
  * logs in, and caches the resulting {@link BroadWorksServer} per {@code (subject, resourceId)} up to
  * the configured idle TTL.
  *
+ * <p><b>Licensing:</b> the Alpaca toolkit is licensed by the bundled {@code co.ecg:ecg-licensing}
+ * runtime. The license may be supplied inline as a string via {@code broadworks.alpaca.license-key}
+ * ({@code ALPACA_LICENSE_KEY}); when set it is loaded into the shared {@link ECGLicense} singleton at
+ * connection time (see {@link #applyLicense()}), so no on-disk license file is required.</p>
+ *
  * <p><b>Runtime note:</b> establishing a live connection uses the Alpaca toolkit's
- * {@code BroadWorksServer} login machinery, which requires the toolkit's runtime companions
- * ({@code org.apache.jcs:jcs} and {@code co.ecg:ecg-licensing}) on the classpath and a reachable
- * BroadWorks OCI server. Those companions are provisioned in the deployed environment; when they are
- * absent this factory fails fast with a safe {@link AlpacaException} (after successfully resolving
- * and validating the per-tenant resource). All per-tenant resolution, argument mapping, and response
- * handling are exercised independently of a live server.</p>
+ * {@code BroadWorksServer} login machinery, which additionally requires the toolkit's runtime
+ * companion ({@code org.apache.jcs:jcs}) on the classpath and a reachable BroadWorks OCI server. That
+ * companion is provisioned in the deployed environment; when it is absent this factory fails fast
+ * with a safe {@link AlpacaException} (after successfully resolving and validating the per-tenant
+ * resource). All per-tenant resolution, argument mapping, and response handling are exercised
+ * independently of a live server.</p>
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -39,6 +46,7 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
     private final AlpacaProperties alpacaProperties;
 
     private final ConcurrentMap<String, CachedConnection> cache = new ConcurrentHashMap<>();
+    private final AtomicBoolean licenseApplied = new AtomicBoolean(false);
 
     @Override
     public BroadWorksServer connect(String subject, String resourceId) {
@@ -52,6 +60,7 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         if (existing != null && existing.isFresh(alpacaProperties.connectionCacheTtl())) {
             return existing.server();
         }
+        applyLicense();
         final BroadWorksServer server = login(resource);
         cache.put(key, new CachedConnection(server, Instant.now()));
         return server;
@@ -91,8 +100,35 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         log.info("Preparing BroadWorks connection to host={} loginType={} (login performed by the "
                 + "provisioned Alpaca runtime)", resource.hostname(), resource.loginType());
         throw new AlpacaException("Live BroadWorks connectivity is not available in this build: the "
-                + "Alpaca toolkit runtime companions (org.apache.jcs:jcs and co.ecg:ecg-licensing) and a "
-                + "reachable BroadWorks server must be provisioned in the deployment environment");
+                + "Alpaca toolkit runtime companion (org.apache.jcs:jcs) and a reachable BroadWorks "
+                + "server must be provisioned in the deployment environment");
+    }
+
+    /**
+     * Loads the configured Alpaca license string into the ECG licensing runtime, if one was supplied
+     * via {@code broadworks.alpaca.license-key} ({@code ALPACA_LICENSE_KEY}). Seeding the license here
+     * populates the toolkit's shared {@link ECGLicense} singleton, so the subsequent
+     * {@code BroadWorksServer} login uses the string-supplied license instead of an on-disk file. When
+     * no key is configured the license is left to the provisioned runtime (license file / manager).
+     *
+     * <p>Runs at most once per successful load; an invalid license string fails fast with a safe
+     * {@link AlpacaException} (no license content is logged).</p>
+     */
+    protected void applyLicense() {
+        final String licenseKey = alpacaProperties.licenseKey();
+        if (licenseKey == null || licenseKey.isBlank()) {
+            return;
+        }
+        if (!licenseApplied.compareAndSet(false, true)) {
+            return;
+        }
+        final ECGLicense license = ECGLicense.getLicense(licenseKey);
+        if (!license.isValid()) {
+            licenseApplied.set(false);
+            throw new AlpacaException("The configured Alpaca license key is invalid: " + license.getInvalidReason());
+        }
+        log.info("Loaded Alpaca license from configured key (company={}, validUntil={})",
+                license.getCompany(), license.getValidUntil());
     }
 
     private static BroadWorksLoginType parseLoginType(String loginType) {

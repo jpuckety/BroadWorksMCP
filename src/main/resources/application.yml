@@ -61,6 +61,9 @@ broadworks:
       allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
   alpaca:
     connection-cache-ttl: ${ALPACA_CONNECTION_CACHE_TTL:PT30M}
+    # Alpaca toolkit license, supplied inline as a string (no on-disk license file required).
+    # Leave empty to let the provisioned runtime supply the license (file / license manager).
+    license-key: ${ALPACA_LICENSE_KEY:}
 
 management:
   endpoints:

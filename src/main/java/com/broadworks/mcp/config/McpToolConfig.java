@@ -1,5 +1,6 @@
 package com.broadworks.mcp.config;
 
+import com.broadworks.mcp.mcp.tools.ConnectionTools;
 import com.broadworks.mcp.mcp.tools.GroupTools;
 import com.broadworks.mcp.mcp.tools.ServiceProviderTools;
 
@@ -19,10 +20,11 @@ import org.springframework.context.annotation.Configuration;
 public class McpToolConfig {
 
     @Bean
-    public ToolCallbackProvider broadWorksToolCallbackProvider(ServiceProviderTools serviceProviderTools,
+    public ToolCallbackProvider broadWorksToolCallbackProvider(ConnectionTools connectionTools,
+                                                               ServiceProviderTools serviceProviderTools,
                                                                GroupTools groupTools) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(serviceProviderTools, groupTools)
+                .toolObjects(connectionTools, serviceProviderTools, groupTools)
                 .build();
     }
 }

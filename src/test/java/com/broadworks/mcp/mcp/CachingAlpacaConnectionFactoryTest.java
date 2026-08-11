@@ -18,7 +18,7 @@ class CachingAlpacaConnectionFactoryTest {
     @BeforeEach
     void setUp() {
         resourceStore = new InMemoryResourceStore(new NoopEncryptionService());
-        factory = new CachingAlpacaConnectionFactory(resourceStore, new AlpacaProperties(null));
+        factory = new CachingAlpacaConnectionFactory(resourceStore, new AlpacaProperties(null, null));
     }
 
     private AlpacaResource resource(String id) {
@@ -68,5 +68,19 @@ class CachingAlpacaConnectionFactoryTest {
         assertThatThrownBy(() -> factory.connect("sub-2", null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("No BroadWorks connection is configured");
+    }
+
+    @Test
+    void rejectsInvalidInlineLicenseKey() {
+        // A license supplied inline as a string (e.g. from ALPACA_LICENSE_KEY) is loaded into the ECG
+        // licensing runtime before the toolkit login. A malformed key is rejected up front with a
+        // safe message (the GPG key ring ships inside ecg-licensing, so this needs no live server).
+        final CachingAlpacaConnectionFactory licensed = new CachingAlpacaConnectionFactory(
+                resourceStore, new AlpacaProperties(null, "not-a-valid-license"));
+        resourceStore.put("sub-1", resource("res-1"));
+
+        assertThatThrownBy(() -> licensed.connect("sub-1", null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("license key is invalid");
     }
 }

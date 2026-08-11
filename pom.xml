@@ -31,6 +31,9 @@
         <!-- Alpaca toolkit (installed from lib/ via scripts/install-alpaca.sh) -->
         <alpaca.version>12.2.0-RELEASE</alpaca.version>
 
+        <!-- ECG licensing runtime companion (installed from lib/ via scripts/install-alpaca.sh) -->
+        <ecg-licensing.version>6.2.0-RELEASE</ecg-licensing.version>
+
         <!--
             Override the Lombok version managed by the Spring Boot parent (1.18.36).
             1.18.36 predates and does not support recent JDKs (24/25/26); when the
@@ -154,6 +157,35 @@
             <groupId>co.ecg</groupId>
             <artifactId>alpaca-commons</artifactId>
             <version>${alpaca.version}</version>
+        </dependency>
+        <!--
+            ECG licensing runtime: verifies the Alpaca toolkit license. Required on the classpath
+            for live BroadWorks connectivity. The license itself can be supplied at runtime as a
+            string via ALPACA_LICENSE_KEY (see AlpacaProperties); the jar bundles its own GPG public
+            key ring (pubring.gpg) so no extra keyring provisioning is needed.
+        -->
+        <dependency>
+            <groupId>co.ecg</groupId>
+            <artifactId>ecg-licensing</artifactId>
+            <version>${ecg-licensing.version}</version>
+        </dependency>
+        <!--
+            ecg-licensing runtime companions. ecg-licensing is installed from lib/ with a MINIMAL
+            generated POM (no transitive dependencies), so the plain libraries it needs at runtime are
+            declared here and resolved normally from Maven Central:
+              - license3j decodes/verifies the PGP-signed license string (pulls in BouncyCastle);
+              - java-semver parses the license version.
+            (slf4j-api is already on the classpath via the Spring Boot starters.)
+        -->
+        <dependency>
+            <groupId>com.verhas</groupId>
+            <artifactId>license3j</artifactId>
+            <version>1.0.7</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.zafarkhaja</groupId>
+            <artifactId>java-semver</artifactId>
+            <version>0.9.0</version>
         </dependency>
 
         <!-- ===== Lombok (boilerplate reduction) ===== -->
@@ -345,6 +377,19 @@
                                     <groupId>co.ecg</groupId>
                                     <artifactId>alpaca-library</artifactId>
                                     <version>${alpaca.version}</version>
+                                    <packaging>jar</packaging>
+                                    <generatePom>true</generatePom>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>install-ecg-licensing</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${project.basedir}/lib/ecg-licensing-6.2.0-RELEASE.jar</file>
+                                    <groupId>co.ecg</groupId>
+                                    <artifactId>ecg-licensing</artifactId>
+                                    <version>${ecg-licensing.version}</version>
                                     <packaging>jar</packaging>
                                     <generatePom>true</generatePom>
                                 </configuration>
