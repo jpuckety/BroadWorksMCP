@@ -83,25 +83,35 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
     }
 
     /**
-     * Builds the toolkit connection config from the resource and performs the login. Overridable so a
-     * deployment with the full Alpaca runtime can supply the live login implementation.
+     * Performs the login. Overridable so a deployment with the full Alpaca runtime can supply the
+     * live login implementation (see {@code LiveAlpacaConnectionFactory}). This default resolves and
+     * validates the per-tenant resource / connection config but does not perform a live login.
      */
     protected BroadWorksServer login(AlpacaResource resource) {
-        // Map the per-tenant resource onto the toolkit connection config (no secrets are logged).
-        final LibraryProperties.BroadWorksServerConfig config = new LibraryProperties.BroadWorksServerConfig();
-        config.setHostname(resource.hostname());
-        config.setPort(resource.port());
-        config.setUsername(resource.username());
-        config.setPassword(resource.password());
-        config.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
-        // Validate the configured login type early.
-        parseLoginType(resource.loginType());
-
+        buildServerConfig(resource);
         log.info("Preparing BroadWorks connection to host={} loginType={} (login performed by the "
                 + "provisioned Alpaca runtime)", resource.hostname(), resource.loginType());
         throw new AlpacaException("Live BroadWorks connectivity is not available in this build: the "
                 + "Alpaca toolkit runtime companion (org.apache.jcs:jcs) and a reachable BroadWorks "
                 + "server must be provisioned in the deployment environment");
+    }
+
+    /**
+     * Maps the per-tenant {@link AlpacaResource} onto the toolkit's {@code BroadWorksServerConfig}
+     * and validates the configured login type early (no secrets are logged). Shared by the default
+     * factory and the live override.
+     */
+    protected LibraryProperties.BroadWorksServerConfig buildServerConfig(AlpacaResource resource) {
+        final LibraryProperties.BroadWorksServerConfig config = new LibraryProperties.BroadWorksServerConfig();
+        config.setNickname(resource.displayName());
+        config.setHostname(resource.hostname());
+        config.setPort(resource.port());
+        config.setUsername(resource.username());
+        config.setPassword(resource.password());
+        config.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
+        // Validate the configured login type early (a bad value fails fast with a safe message).
+        parseLoginType(resource.loginType());
+        return config;
     }
 
     /**
@@ -131,7 +141,7 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
                 license.getCompany(), license.getValidUntil());
     }
 
-    private static BroadWorksLoginType parseLoginType(String loginType) {
+    protected static BroadWorksLoginType parseLoginType(String loginType) {
         if (loginType == null || loginType.isBlank()) {
             return BroadWorksLoginType.SYSTEM;
         }

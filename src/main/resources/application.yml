@@ -68,6 +68,11 @@ broadworks:
     redirect:
       allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
   alpaca:
+    # Enable live BroadWorks connectivity (real OCI login via the Alpaca toolkit). When false
+    # (default) the connection factory resolves and validates the per-tenant resource but performs
+    # no live login. Requires a reachable BroadWorks OCI server; a tuned JCS response cache can be
+    # supplied via a classpath cache.ccf (or -Dalpaca.cache.config=/path/to/cache.ccf).
+    live: ${ALPACA_LIVE:false}
     connection-cache-ttl: ${ALPACA_CONNECTION_CACHE_TTL:PT30M}
     # Alpaca toolkit license, supplied inline as a string (no on-disk license file required).
     # Leave empty to let the provisioned runtime supply the license (file / license manager).

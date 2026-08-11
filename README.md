@@ -277,11 +277,17 @@ SecureString-backed secrets injected as container env.
   connection time — no on-disk license file is required (the jar ships its own GPG key ring). An
   invalid key fails fast with a safe error. When the variable is empty the license is left to the
   provisioned runtime (license file / license manager).
-- **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery,
-  which additionally requires the toolkit's runtime companion (`org.apache.jcs:jcs`) on the classpath
-  plus a reachable BroadWorks OCI server. These are provisioned in the deployment environment; when
-  absent the connection factory fails fast with a safe error **after** resolving and validating the
-  per-tenant resource. All per-tenant resolution, argument mapping, and response handling are
-  exercised independently of a live server.
+- **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery. The
+  toolkit's runtime companion (`org.apache.jcs:jcs`, the response cache) is now bundled as a normal
+  Maven dependency (with its legacy transitive back-ends excluded — only Doug Lea's `concurrent` and
+  the already-present commons-logging API are kept). Live login is **opt-in**: set
+  `ALPACA_LIVE=true` (`broadworks.alpaca.live`) to activate `LiveAlpacaConfig`, which wires the
+  toolkit's connection beans and a `LiveAlpacaConnectionFactory` that performs a real OCI login and
+  caches the `BroadWorksServer` per `(subject, resourceId)`. It still requires a **reachable
+  BroadWorks OCI server** (and, optionally, a tuned JCS `cache.ccf` on the classpath / via
+  `-Dalpaca.cache.config`). When `ALPACA_LIVE` is unset/false (the default), the connection factory
+  resolves and validates the per-tenant resource but performs **no** live login, failing fast with a
+  safe error. All per-tenant resolution, argument mapping, and response handling are exercised
+  independently of a live server.
 - **Security**: PKCE (S256) is mandatory; DCR issues public clients only; secrets are KMS-encrypted
   at rest; tokens, passwords, and protocol bodies are never logged.
