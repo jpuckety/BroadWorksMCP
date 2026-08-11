@@ -18,10 +18,14 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Boots the full application on a real HTTP port (in-memory stores) and drives the streamable-HTTP
+ * Boots the full application on a real HTTP port (in-memory stores) and drives the stateless-HTTP
  * MCP endpoint the way a real client does: {@code initialize} then {@code tools/list}. Verifies that
  * every BroadWorks {@code @Tool} is actually returned over the wire (guards against regressions where
  * the tool beans are registered but not exposed).
+ *
+ * <p>The server runs the {@code STATELESS} transport (see {@code application.yml}), so each POST is
+ * self-contained: {@code initialize} returns a plain JSON response with no {@code Mcp-Session-Id}
+ * header and no session id is threaded through the follow-up {@code tools/list} call.</p>
  */
 @SpringBootTest(properties = {"broadworks.storage.backend=IN_MEMORY"},
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -34,7 +38,7 @@ class McpToolsListIntegrationTest {
     private SessionStore sessionStore;
 
     @Test
-    void toolsListReturnsAllBroadWorksToolsOverStreamableHttp() throws Exception {
+    void toolsListReturnsAllBroadWorksToolsOverStatelessHttp() throws Exception {
         sessionStore.createSession(new Session(null, "tok-mcp", null, "client-1", "sub-mcp",
                 "user@example.com", null, null,
                 Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now()));
@@ -55,12 +59,12 @@ class McpToolsListIntegrationTest {
                 HttpResponse.BodyHandlers.ofString());
 
         assertThat(init.statusCode()).isEqualTo(200);
-        final String sessionId = init.headers().firstValue("mcp-session-id").orElseThrow();
+        // STATELESS transport mints no session id; there is no Mcp-Session-Id header to thread through.
+        assertThat(init.headers().firstValue("mcp-session-id")).isEmpty();
 
         final HttpResponse<String> list = client.send(
                 HttpRequest.newBuilder(URI.create(base))
                         .header("Authorization", "Bearer tok-mcp")
-                        .header("Mcp-Session-Id", sessionId)
                         .header("Content-Type", "application/json")
                         .header("Accept", "application/json, text/event-stream")
                         .POST(HttpRequest.BodyPublishers.ofString(

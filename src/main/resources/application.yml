@@ -9,15 +9,23 @@ spring:
       server:
         name: broadworks-mcp
         version: 0.1.0
-        # HTTP transport is auto-configured by spring-ai-starter-mcp-server-webmvc.
-        # NOTE: although McpServerProperties#protocol has a Java default of STREAMABLE, the
-        # transport auto-configuration is selected by @ConditionalOnProperty on
-        # `spring.ai.mcp.server.protocol`: STREAMABLE only activates when the property is set
-        # explicitly (matchIfMissing=false), whereas SSE activates when the property is absent
-        # (matchIfMissing=true). So without this line the server would only expose the legacy
-        # SSE transport at /sse and NOT the /mcp endpoint the client connects to.
-        # Set STREAMABLE explicitly to expose the single streamable-HTTP endpoint at /mcp.
-        protocol: STREAMABLE
+        # HTTP transport is auto-configured by spring-ai-starter-mcp-server-webmvc. The transport is
+        # selected by @ConditionalOnProperty on `spring.ai.mcp.server.protocol` (all three values are
+        # matchIfMissing=false, EXCEPT the legacy SSE transport which activates when the property is
+        # absent). So this line must be set explicitly to expose the /mcp endpoint the client connects
+        # to instead of only the legacy SSE transport at /sse.
+        #
+        # STATELESS (not STREAMABLE) is required because this server runs as multiple load-balanced
+        # instances (CDK desiredCount > 1). The STREAMABLE transport keeps per-client session state
+        # (keyed by the Mcp-Session-Id it mints on `initialize`) in memory on a SINGLE instance. Native
+        # MCP clients speak the JSON-RPC transport without cookies, so the ALB's cookie stickiness does
+        # NOT pin them; follow-up calls (`notifications/initialized`, `tools/call`, DELETE) round-robin
+        # to a different instance that never saw the session and are rejected with 404. STATELESS
+        # (WebMvcStatelessServerTransport) assigns no session id and handles every POST /mcp
+        # self-contained, so any instance can serve any request. This server only exposes @Tool
+        # endpoints (no server-initiated notifications / resource subscriptions), so the streaming
+        # features STATELESS forgoes are unused here.
+        protocol: STATELESS
         # stdio is disabled here and enabled only by the `stdio` profile.
         stdio: false
 
