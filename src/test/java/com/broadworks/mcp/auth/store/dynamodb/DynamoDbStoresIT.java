@@ -146,6 +146,27 @@ class DynamoDbStoresIT {
     }
 
     @Test
+    void httpSessionRoundTripAcrossRepositoryInstances() {
+        // Two repository instances model the two load-balanced ECS tasks sharing one table.
+        final DynamoDbHttpSessionRepository taskA =
+                new DynamoDbHttpSessionRepository(dynamo, SESSION_TABLE, Duration.ofMinutes(30));
+        final DynamoDbHttpSessionRepository taskB =
+                new DynamoDbHttpSessionRepository(dynamo, SESSION_TABLE, Duration.ofMinutes(30));
+
+        final org.springframework.session.MapSession created = taskA.createSession();
+        created.setAttribute("SPRING_SECURITY_CONTEXT", "principal-abc");
+        taskA.save(created);
+
+        // A different instance (task) can load the session the first one created.
+        final org.springframework.session.MapSession loaded = taskB.findById(created.getId());
+        assertThat(loaded).isNotNull();
+        assertThat(loaded.<String>getAttribute("SPRING_SECURITY_CONTEXT")).isEqualTo("principal-abc");
+
+        taskB.deleteById(created.getId());
+        assertThat(taskA.findById(created.getId())).isNull();
+    }
+
+    @Test
     void clientCrud() {
         final DynamoDbSessionStore store = new DynamoDbSessionStore(dynamo, SESSION_TABLE);
         final RegisteredClientRecord client = new RegisteredClientRecord(

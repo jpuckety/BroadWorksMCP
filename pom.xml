@@ -102,6 +102,17 @@
             <artifactId>spring-boot-starter-oauth2-client</artifactId>
         </dependency>
 
+        <!--
+            Spring Session core only: backs the interactive Google-login HTTP session with a custom
+            DynamoDB SessionRepository (see DynamoDbHttpSessionRepository / HttpSessionConfig) so the
+            login/authorization-code handshake is shared across the load-balanced ECS tasks and
+            survives restarts, instead of living in a single task's in-memory Tomcat session.
+        -->
+        <dependency>
+            <groupId>org.springframework.session</groupId>
+            <artifactId>spring-session-core</artifactId>
+        </dependency>
+
         <!-- ===== Web / validation / observability ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
