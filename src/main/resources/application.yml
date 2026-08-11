@@ -74,3 +74,14 @@ management:
     health:
       probes:
         enabled: true
+
+# ---------------------------------------------------------------------------
+# Logging. Per-package levels and the console appender live in logback-spring.xml
+# (env-overridable via LOG_LEVEL_* — see README "Logging & troubleshooting").
+# The correlation pattern below prepends the MCP request-correlation id stamped
+# by McpEndpointLoggingFilter, so every log line for one MCP request shares an id
+# (rendered as [--------] for non-MCP traffic).
+# ---------------------------------------------------------------------------
+logging:
+  pattern:
+    correlation: "[%X{mcpRequestId:-        }] "

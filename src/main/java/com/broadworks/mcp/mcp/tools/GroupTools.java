@@ -38,18 +38,27 @@ public class GroupTools {
             @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
+        log.debug("tool broadworks_list_groups invoked (serviceProviderId={}, resourceId={})",
+                serviceProviderId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
             final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
             final Group.GroupGetListInServiceProviderResponse response =
                     new Group.GroupGetListInServiceProviderRequest(serviceProvider).fire();
             ServiceProviderTools.ensureSuccess(response, "list groups");
-            return response.getGroupTable().stream()
+            final List<GroupSummary> summaries = response.getGroupTable().stream()
                     .map(row -> new GroupSummary(row.getGroupId(), row.getGroupName(), row.getUserLimit()))
                     .toList();
+            log.debug("tool broadworks_list_groups returning {} group(s) for serviceProviderId={}",
+                    summaries.size(), serviceProviderId);
+            return summaries;
         } catch (AlpacaException ex) {
+            log.warn("tool broadworks_list_groups failed for serviceProviderId={}: {}",
+                    serviceProviderId, ex.getMessage());
             throw ex;
         } catch (RuntimeException ex) {
+            log.warn("tool broadworks_list_groups failed unexpectedly for serviceProviderId={}: {}",
+                    serviceProviderId, ex.getMessage());
             throw new AlpacaException("Failed to list groups in service provider " + serviceProviderId, ex);
         }
     }
@@ -62,6 +71,8 @@ public class GroupTools {
             @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
+        log.debug("tool broadworks_get_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
+                serviceProviderId, groupId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
             final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
@@ -72,6 +83,8 @@ public class GroupTools {
                     group.getServiceProviderId(),
                     group.getDefaultDomain());
         } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_get_group failed for serviceProviderId={} groupId={}: {}",
+                    serviceProviderId, groupId, ex.getMessage());
             throw new AlpacaException("Group not found or not accessible: " + serviceProviderId + "/" + groupId, ex);
         }
     }

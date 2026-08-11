@@ -38,9 +38,11 @@ public class ConnectionTools {
                     + "(passwords are never returned).")
     public List<ConnectionSummary> listConnections() {
         final String subject = currentSubject();
-        return resourceStore.listForUser(subject).stream()
+        final List<ConnectionSummary> summaries = resourceStore.listForUser(subject).stream()
                 .map(ConnectionSummary::from)
                 .toList();
+        log.debug("tool broadworks_list_connections returning {} connection(s)", summaries.size());
+        return summaries;
     }
 
     @Tool(name = "broadworks_add_connection",
@@ -66,6 +68,10 @@ public class ConnectionTools {
                             + "derived from the display name")
             String resourceId) {
         final String subject = currentSubject();
+        // Log non-secret parameters only; the password is never logged.
+        log.debug("tool broadworks_add_connection invoked (displayName={}, host={}, port={}, username={}, "
+                        + "loginType={}, resourceId={})",
+                displayName, hostname, port, username, loginType, resourceId);
 
         if (hostname == null || hostname.isBlank()) {
             throw new AlpacaException("hostname is required");
@@ -109,6 +115,7 @@ public class ConnectionTools {
         if (resourceId == null || resourceId.isBlank()) {
             throw new AlpacaException("resourceId is required");
         }
+        log.debug("tool broadworks_delete_connection invoked (resourceId={})", resourceId);
         final String subject = currentSubject();
         resourceStore.delete(subject, resourceId);
         log.info("Deleted BroadWorks connection resourceId={}", resourceId);

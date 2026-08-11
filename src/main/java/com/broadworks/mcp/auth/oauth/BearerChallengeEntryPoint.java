@@ -7,6 +7,7 @@ import com.broadworks.mcp.config.PublicBaseUrlProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -18,7 +19,12 @@ import org.springframework.security.web.AuthenticationEntryPoint;
  * {@code WWW-Authenticate: Bearer realm="mcp", resource_metadata="..."} challenge so MCP clients can
  * discover how to authenticate (RFC 9728). Renders a short HTML page for browsers and a plain
  * message otherwise.
+ *
+ * <p>Each challenge is logged at {@code WARN} with the request method/URI and the underlying
+ * authentication failure reason, so unauthenticated or bad-token calls to protected endpoints are
+ * easy to spot when troubleshooting.</p>
  */
+@Slf4j
 @RequiredArgsConstructor
 public class BearerChallengeEntryPoint implements AuthenticationEntryPoint {
 
@@ -30,6 +36,8 @@ public class BearerChallengeEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
+        log.warn("Returning 401 Bearer challenge for {} {} (reason: {})",
+                request.getMethod(), request.getRequestURI(), authException.getMessage());
         final String resourceMetadata = publicBaseUrl.baseUrl() + METADATA_PATH;
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setHeader(HttpHeaders.WWW_AUTHENTICATE,

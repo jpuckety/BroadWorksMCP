@@ -145,8 +145,45 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `REGISTERED_CLIENT_TTL` | `P90D` | Registered (DCR) client lifetime. |
 | `ALPACA_CONNECTION_CACHE_TTL` | `PT30M` | Idle lifetime of a cached BroadWorks connection. |
 | `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). |
+| `LOG_LEVEL_ROOT` | `INFO` | Root log level (HTTP profile). |
+| `LOG_LEVEL_APP` | `DEBUG` | Level for the application package `com.broadworks.mcp`. |
+| `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP endpoint access log (`com.broadworks.mcp.web`). |
+| `LOG_LEVEL_MCP` | `INFO` | Level for the Spring AI MCP + MCP SDK protocol internals (`org.springframework.ai.mcp`, `io.modelcontextprotocol`). Set to `DEBUG`/`TRACE` to see the raw protocol handshake. |
+| `LOG_LEVEL_SECURITY` | `INFO` | Level for `org.springframework.security` (raise to `DEBUG` to trace the OAuth/Resource-Server filter chain). |
 
 All values are externalized; there are no secrets or magic numbers in code.
+
+---
+
+## Logging & troubleshooting
+
+The MCP endpoints (`/mcp` and the legacy `/sse`) are access-logged by `McpEndpointLoggingFilter` to
+make client interactions easy to follow:
+
+- Every MCP request is stamped with a short **correlation id** (and the client's `Mcp-Session-Id`
+  when present) via the SLF4J MDC, so all log lines produced while handling one request share the
+  same id. The id is rendered in the console log's correlation slot (e.g. `[a1b2c3d4]`).
+- A completion line reports the HTTP method, URI, the JSON-RPC `method` (and, for `tools/call`, the
+  tool `name`), the response `status`, and the `durationMs`. `4xx`/`5xx` responses are logged at
+  `WARN`/`ERROR` so failures stand out.
+- Auth problems are explained where they happen: the token introspector logs **why** a bearer token
+  was rejected (unknown / expired), and the bearer-challenge entry point logs each `401` it returns.
+
+**Secrets are never logged.** The bearer token is only ever reported as present/absent, and the
+JSON-RPC `params.arguments` (which may carry a BroadWorks password on `broadworks_add_connection`)
+are never logged — only the safe envelope fields (`method`, `id`, tool `name`).
+
+Raise verbosity for a troubleshooting session **without a rebuild** by setting the `LOG_LEVEL_*`
+environment variables above, for example:
+
+```bash
+# See the MCP protocol handshake and the security filter chain in detail.
+LOG_LEVEL_MCP=DEBUG LOG_LEVEL_SECURITY=DEBUG \
+STORAGE_BACKEND=IN_MEMORY java -jar target/broadworks-mcp-*.jar
+```
+
+Under the `stdio` profile all logging already goes to **stderr** at `DEBUG` (stdout is reserved for
+the MCP protocol).
 
 ---
 

@@ -38,21 +38,26 @@ public class ServiceProviderTools {
             @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
+        log.debug("tool broadworks_list_service_providers invoked (resourceId={})", resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
             final ServiceProvider.ServiceProviderGetListResponse response =
                     new ServiceProvider.ServiceProviderGetListRequest(server).fire();
             ensureSuccess(response, "list service providers");
-            return response.getServiceProviderTable().stream()
+            final List<ServiceProviderSummary> summaries = response.getServiceProviderTable().stream()
                     .map(row -> new ServiceProviderSummary(
                             row.getServiceProviderId(),
                             row.getServiceProviderName(),
                             Boolean.parseBoolean(row.getIsEnterprise()),
                             row.getResellerId()))
                     .toList();
+            log.debug("tool broadworks_list_service_providers returning {} service provider(s)", summaries.size());
+            return summaries;
         } catch (AlpacaException ex) {
+            log.warn("tool broadworks_list_service_providers failed: {}", ex.getMessage());
             throw ex;
         } catch (RuntimeException ex) {
+            log.warn("tool broadworks_list_service_providers failed unexpectedly: {}", ex.getMessage());
             throw new AlpacaException("Failed to list service providers", ex);
         }
     }
@@ -64,6 +69,8 @@ public class ServiceProviderTools {
             @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
+        log.debug("tool broadworks_get_service_provider invoked (serviceProviderId={}, resourceId={})",
+                serviceProviderId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
             final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, serviceProviderId);
@@ -74,6 +81,8 @@ public class ServiceProviderTools {
                     Boolean.TRUE.equals(sp.getIsEnterprise()),
                     sp.getResellerId());
         } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_get_service_provider failed for serviceProviderId={}: {}",
+                    serviceProviderId, ex.getMessage());
             throw new AlpacaException("Service provider not found or not accessible: " + serviceProviderId, ex);
         }
     }

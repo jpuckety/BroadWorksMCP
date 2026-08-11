@@ -25,10 +25,20 @@
     <springProfile name="!stdio">
         <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
-        <logger name="com.broadworks.mcp" level="DEBUG"/>
+        <!--
+          Log levels are overridable at runtime via environment variables (or -D system properties)
+          so operators can raise verbosity for troubleshooting without a rebuild/redeploy, e.g.
+          LOG_LEVEL_MCP_ENDPOINTS=DEBUG for the MCP access log, or LOG_LEVEL_MCP=DEBUG / TRACE for the
+          Spring AI + MCP SDK protocol internals. See README "Logging & troubleshooting".
+        -->
+        <logger name="com.broadworks.mcp" level="${LOG_LEVEL_APP:-DEBUG}"/>
+        <logger name="com.broadworks.mcp.web" level="${LOG_LEVEL_MCP_ENDPOINTS:-DEBUG}"/>
+        <logger name="org.springframework.ai.mcp" level="${LOG_LEVEL_MCP:-INFO}"/>
+        <logger name="io.modelcontextprotocol" level="${LOG_LEVEL_MCP:-INFO}"/>
+        <logger name="org.springframework.security" level="${LOG_LEVEL_SECURITY:-INFO}"/>
         <logger name="software.amazon.awssdk.auth.credentials" level="INFO" />
 
-        <root level="INFO">
+        <root level="${LOG_LEVEL_ROOT:-INFO}">
             <appender-ref ref="CONSOLE"/>
         </root>
     </springProfile>
