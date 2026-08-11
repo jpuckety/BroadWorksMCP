@@ -29,7 +29,11 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 public class BearerChallengeEntryPoint implements AuthenticationEntryPoint {
 
     private static final String REALM = "mcp";
-    private static final String METADATA_PATH = "/.well-known/oauth-protected-resource";
+    // RFC 9728 locates the metadata for a resource with a path component (`<baseUrl>/mcp`) at the
+    // well-known URI with that path inserted after the well-known segment. Point clients at that
+    // resource-specific document so the advertised `resource_metadata` corresponds to the `/mcp`
+    // resource they are calling (Spring's filter serves it there as well as at the bare root).
+    private static final String METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
 
     private final PublicBaseUrlProperties publicBaseUrl;
 

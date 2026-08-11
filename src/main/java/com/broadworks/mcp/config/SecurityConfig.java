@@ -71,9 +71,15 @@ public class SecurityConfig {
                         // /.well-known/oauth-protected-resource itself. Customize it to advertise this
                         // server as the resource and point clients at the authorization server (issuer),
                         // pinned to the external base URL. Replaces the previous custom controller.
+                        //
+                        // The advertised `resource` is the canonical URL of the protected resource --
+                        // the MCP endpoint itself (`<baseUrl>/mcp`) -- rather than the bare base URL, so
+                        // it matches the audience the bearer token is actually presented at. Strict MCP
+                        // clients (RFC 9728) validate that the resource in the metadata equals the URL
+                        // they are calling, so advertising `<baseUrl>/mcp` keeps that check happy.
                         .protectedResourceMetadata(metadata -> metadata
                                 .protectedResourceMetadataCustomizer(builder -> builder
-                                        .resource(baseUrl)
+                                        .resource(baseUrl + "/mcp")
                                         .authorizationServer(baseUrl)
                                         .scope("openid")
                                         .scope("email")

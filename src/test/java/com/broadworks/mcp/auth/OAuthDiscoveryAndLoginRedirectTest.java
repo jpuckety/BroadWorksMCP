@@ -2,6 +2,7 @@ package com.broadworks.mcp.auth;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -55,6 +56,15 @@ class OAuthDiscoveryAndLoginRedirectTest {
     }
 
     @Test
+    void authorizationServerMetadataAdvertisesNoneTokenEndpointAuthMethod() throws Exception {
+        // MCP clients register as public clients (token_endpoint_auth_method=none, PKCE), so the
+        // RFC 8414 metadata must advertise "none" among the supported token-endpoint auth methods.
+        mockMvc.perform(get("/.well-known/oauth-authorization-server").accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token_endpoint_auth_methods_supported", hasItem("none")));
+    }
+
+    @Test
     void issuerIsConsistentBetweenDiscoveryDocuments() throws Exception {
         String issuer = objectMapper
                 .readTree(mockMvc.perform(get("/.well-known/oauth-authorization-server")
@@ -62,11 +72,13 @@ class OAuthDiscoveryAndLoginRedirectTest {
                         .andReturn().getResponse().getContentAsString())
                 .get("issuer").asText();
 
-        // The protected-resource metadata must point clients at the same authorization server.
+        // The protected-resource metadata must point clients at the same authorization server, and
+        // advertise the MCP endpoint itself (<issuer>/mcp) as the protected resource -- the audience
+        // the bearer token is presented at -- rather than the bare base URL.
         mockMvc.perform(get("/.well-known/oauth-protected-resource").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.authorization_servers[0]", equalTo(issuer)))
-                .andExpect(jsonPath("$.resource", equalTo(issuer)));
+                .andExpect(jsonPath("$.resource", equalTo(issuer + "/mcp")));
     }
 
     @Test

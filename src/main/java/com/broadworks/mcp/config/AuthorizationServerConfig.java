@@ -59,9 +59,16 @@ public class AuthorizationServerConfig {
                         .oidc(Customizer.withDefaults())
                         // Advertise the custom dynamic client registration endpoint (RFC 7591) in the
                         // RFC 8414 authorization-server metadata so MCP clients can register and proceed.
+                        //
+                        // Also advertise `none` in token_endpoint_auth_methods_supported. MCP clients
+                        // register dynamically as public clients (no client secret, PKCE-protected), so
+                        // they authenticate to the token endpoint with method "none". SAS only advertises
+                        // client_secret_basic/client_secret_post by default; strict clients inspect this
+                        // list and refuse to proceed unless "none" is present, so we add it explicitly.
                         .authorizationServerMetadataEndpoint(metadata -> metadata
                                 .authorizationServerMetadataCustomizer(builder -> builder
-                                        .clientRegistrationEndpoint(registrationEndpoint))))
+                                        .clientRegistrationEndpoint(registrationEndpoint)
+                                        .tokenEndpointAuthenticationMethod("none"))))
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
                 // For browser clients hitting the authorize endpoint unauthenticated, start Google login.
                 .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
