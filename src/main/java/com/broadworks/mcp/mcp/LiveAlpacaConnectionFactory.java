@@ -11,9 +11,9 @@ import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * Live {@link AlpacaConnectionFactory}: performs a real OCI login against BroadWorks using the Alpaca
- * toolkit's {@code BroadWorksServer} login machinery. Active only when {@code broadworks.alpaca.live}
- * is {@code true} (see {@link com.broadworks.mcp.config.LiveAlpacaConfig}); otherwise the default
- * {@link CachingAlpacaConnectionFactory} (which does not perform a live login) is used.
+ * toolkit's {@code BroadWorksServer} login machinery. This is the default runtime factory (see
+ * {@link com.broadworks.mcp.config.LiveAlpacaConfig}). When {@code broadworks.alpaca.live=false}
+ * (tests), {@link CachingAlpacaConnectionFactory} is used instead and does not perform a live login.
  *
  * <p>Each connection is a fresh prototype {@link BroadWorksServer} bean (with its own OCS switchboard,
  * request bundler and JCS response cache) supplied by the Spring context. Resolution of the caller's

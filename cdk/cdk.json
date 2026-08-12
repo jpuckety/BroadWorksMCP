@@ -10,7 +10,8 @@
     "@aws-cdk/aws-ecs:disableEcsImdsBlocking": true,
     "ssm": {
       "googleClientId": "/broadworks-mcp/google-client-id",
-      "googleClientSecret": "/broadworks-mcp/google-client-secret"
+      "googleClientSecret": "/broadworks-mcp/google-client-secret",
+      "alpacaLicenseKey": "/broadworks-mcp/alpaca-license-key"
     }
   }
 }

@@ -30,13 +30,10 @@ import lombok.extern.slf4j.Slf4j;
  * ({@code ALPACA_LICENSE_KEY}); when set it is loaded into the shared {@link ECGLicense} singleton at
  * connection time (see {@link #applyLicense()}), so no on-disk license file is required.</p>
  *
- * <p><b>Runtime note:</b> establishing a live connection uses the Alpaca toolkit's
- * {@code BroadWorksServer} login machinery, which additionally requires the toolkit's runtime
- * companion ({@code org.apache.jcs:jcs}) on the classpath and a reachable BroadWorks OCI server. That
- * companion is provisioned in the deployed environment; when it is absent this factory fails fast
- * with a safe {@link AlpacaException} (after successfully resolving and validating the per-tenant
- * resource). All per-tenant resolution, argument mapping, and response handling are exercised
- * independently of a live server.</p>
+ * <p><b>Live login:</b> this base class (and the bean registered when
+ * {@code broadworks.alpaca.live=false}) only resolves/validates the per-tenant resource and does
+ * <b>not</b> open an OCI session. Runtime/production uses {@link LiveAlpacaConnectionFactory}
+ * (live on by default). The non-live path is for tests that must not contact BroadWorks.</p>
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -83,17 +80,19 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
     }
 
     /**
-     * Performs the login. Overridable so a deployment with the full Alpaca runtime can supply the
-     * live login implementation (see {@code LiveAlpacaConnectionFactory}). This default resolves and
-     * validates the per-tenant resource / connection config but does not perform a live login.
+     * Performs the login. Overridden by {@link LiveAlpacaConnectionFactory} for real OCI sessions.
+     * This implementation is used only when live mode is explicitly disabled (tests).
      */
     protected BroadWorksServer login(AlpacaResource resource) {
         buildServerConfig(resource);
-        log.info("Preparing BroadWorks connection to host={} loginType={} (login performed by the "
-                + "provisioned Alpaca runtime)", resource.hostname(), resource.loginType());
-        throw new AlpacaException("Live BroadWorks connectivity is not available in this build: the "
-                + "Alpaca toolkit runtime companion (org.apache.jcs:jcs) and a reachable BroadWorks "
-                + "server must be provisioned in the deployment environment");
+        log.info("BroadWorks resource host={} loginType={} is configured, but live login is disabled "
+                        + "(broadworks.alpaca.live=false / ALPACA_LIVE=false)",
+                resource.hostname(), resource.loginType());
+        throw new AlpacaException(
+                "Live BroadWorks connectivity is disabled (broadworks.alpaca.live=false). "
+                        + "Runtime defaults to live login; unset ALPACA_LIVE or set it to true, "
+                        + "configure ALPACA_LICENSE_KEY if required, ensure a BroadWorks connection "
+                        + "is stored for the user, and that the server can reach the OCI host.");
     }
 
     /**

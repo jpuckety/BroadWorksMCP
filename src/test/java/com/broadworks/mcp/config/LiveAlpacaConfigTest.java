@@ -14,10 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
- * Verifies the opt-in wiring toggled by {@code broadworks.alpaca.live}: the correct connection
- * factory is selected and — crucially — that enabling live mode boots a valid context (the toolkit's
- * prototype {@link BroadWorksServer} graph is registered but not instantiated, so no live server is
- * needed).
+ * Verifies live vs non-live wiring toggled by {@code broadworks.alpaca.live}: live is the default;
+ * tests set the flag false for the stub factory.
  */
 class LiveAlpacaConfigTest {
 
@@ -27,24 +25,33 @@ class LiveAlpacaConfigTest {
             .withBean(AlpacaProperties.class, () -> new AlpacaProperties(null, null));
 
     @Test
-    void defaultsToNonLiveFactory() {
+    void defaultsToLiveFactory() {
         runner.run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(AlpacaConnectionFactory.class);
             assertThat(context.getBean(AlpacaConnectionFactory.class))
-                    .isInstanceOf(CachingAlpacaConnectionFactory.class)
-                    .isNotInstanceOf(LiveAlpacaConnectionFactory.class);
+                    .isInstanceOf(LiveAlpacaConnectionFactory.class);
+            assertThat(context.getBeanNamesForType(BroadWorksServer.class)).isNotEmpty();
         });
     }
 
     @Test
-    void enablingLiveWiresLiveFactoryAndRegistersServerPrototype() {
+    void liveTrueWiresLiveFactoryAndRegistersServerPrototype() {
         runner.withPropertyValues("broadworks.alpaca.live=true").run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(AlpacaConnectionFactory.class);
             assertThat(context.getBean(AlpacaConnectionFactory.class))
                     .isInstanceOf(LiveAlpacaConnectionFactory.class);
-            // The prototype BroadWorksServer bean graph is registered (but not instantiated: no live
-            // server is contacted just by starting the context).
+            // Prototype graph is registered but not instantiated (no live server contacted).
             assertThat(context.getBeanNamesForType(BroadWorksServer.class)).isNotEmpty();
+        });
+    }
+
+    @Test
+    void liveFalseWiresNonLiveFactory() {
+        runner.withPropertyValues("broadworks.alpaca.live=false").run(context -> {
+            assertThat(context).hasNotFailed().hasSingleBean(AlpacaConnectionFactory.class);
+            assertThat(context.getBean(AlpacaConnectionFactory.class))
+                    .isInstanceOf(CachingAlpacaConnectionFactory.class)
+                    .isNotInstanceOf(LiveAlpacaConnectionFactory.class);
         });
     }
 }

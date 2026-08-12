@@ -48,11 +48,12 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 ECS_CLUSTER="${ECS_CLUSTER:-}"
 ECS_SERVICE="${ECS_SERVICE:-}"
 
-# SSM SecureString parameter names for the Google OAuth secrets. These default
+# SSM SecureString parameter names for secrets the ECS task injects. These default
 # to the same paths the CDK app reads (see cdk/lib/broadworks-mcp-stack.ts) and
 # can be overridden to match a custom `ssm` CDK context.
 SSM_GOOGLE_CLIENT_ID_PARAM="${SSM_GOOGLE_CLIENT_ID_PARAM:-/broadworks-mcp/google-client-id}"
 SSM_GOOGLE_CLIENT_SECRET_PARAM="${SSM_GOOGLE_CLIENT_SECRET_PARAM:-/broadworks-mcp/google-client-secret}"
+SSM_ALPACA_LICENSE_KEY_PARAM="${SSM_ALPACA_LICENSE_KEY_PARAM:-/broadworks-mcp/alpaca-license-key}"
 
 # Optional ACM certificate ARN for the HTTPS ALB listener. May also be passed
 # on the command line (see `deploy`). Falls back to the env var the CDK app
@@ -287,21 +288,24 @@ put_secure_param() {
   log "Pushed ${name}"
 }
 
-# Push the Google OAuth secrets from .env into SSM as SecureString parameters so
-# the deployed ECS task (which reads them via ecs.Secret.fromSsmParameter) picks
-# them up. Values are sourced from GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET, which
-# load_dotenv has already read from .env (env/inline values take precedence).
+# Push Google OAuth + Alpaca license secrets from .env into SSM as SecureString
+# parameters so the deployed ECS task (which reads them via ecs.Secret.fromSsmParameter)
+# picks them up. Values are sourced from GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET /
+# ALPACA_LICENSE_KEY, which load_dotenv has already read from .env (env/inline
+# values take precedence).
 cmd_push_secrets() {
   require aws
   local missing=()
   [[ -n "${GOOGLE_CLIENT_ID:-}" ]]     || missing+=(GOOGLE_CLIENT_ID)
   [[ -n "${GOOGLE_CLIENT_SECRET:-}" ]] || missing+=(GOOGLE_CLIENT_SECRET)
+  [[ -n "${ALPACA_LICENSE_KEY:-}" ]]   || missing+=(ALPACA_LICENSE_KEY)
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "Missing required value(s): ${missing[*]}. Set them in ${ENV_FILE#${PROJECT_ROOT}/} (or the environment) before pushing."
   fi
-  log "Pushing Google OAuth secrets from ${ENV_FILE#${PROJECT_ROOT}/} into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
+  log "Pushing secrets from ${ENV_FILE#${PROJECT_ROOT}/} into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
   put_secure_param "${SSM_GOOGLE_CLIENT_ID_PARAM}"     "${GOOGLE_CLIENT_ID}"
   put_secure_param "${SSM_GOOGLE_CLIENT_SECRET_PARAM}" "${GOOGLE_CLIENT_SECRET}"
+  put_secure_param "${SSM_ALPACA_LICENSE_KEY_PARAM}"   "${ALPACA_LICENSE_KEY}"
   log "Done. Deploy (or restart the service) so the task picks up the new values."
 }
 
@@ -395,8 +399,9 @@ Container:
                    (ECR_REPOSITORY/ECR_REPOSITORY_URI, IMAGE_TAG, ECS_CLUSTER, ECS_SERVICE).
 
 Secrets (AWS SSM):
-  push-secrets     Push the Google OAuth secrets from .env (GOOGLE_CLIENT_ID/
-                   GOOGLE_CLIENT_SECRET) into SSM as SecureString parameters.
+  push-secrets     Push Google OAuth + Alpaca license secrets from .env
+                   (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ALPACA_LICENSE_KEY)
+                   into SSM as SecureString parameters.
 
 Deploy (AWS CDK):
   cdk-install      Install CDK Node dependencies (cdk/).
@@ -418,9 +423,11 @@ Environment overrides:
                     new deployment (skipped with a warning when unset).
   CERTIFICATE_ARN   ACM certificate ARN for the HTTPS ALB listener (deploy/synth).
   AWS_REGION        AWS region targeted by push-secrets (passed as --region).
-  SSM_GOOGLE_CLIENT_ID_PARAM, SSM_GOOGLE_CLIENT_SECRET_PARAM
-                    SSM parameter names for push-secrets (default
-                    /broadworks-mcp/google-client-id and .../google-client-secret).
+  SSM_GOOGLE_CLIENT_ID_PARAM, SSM_GOOGLE_CLIENT_SECRET_PARAM,
+  SSM_ALPACA_LICENSE_KEY_PARAM
+                    SSM parameter names for push-secrets (defaults
+                    /broadworks-mcp/google-client-id, .../google-client-secret,
+                    and .../alpaca-license-key).
   PUBLIC_HOSTNAME   Public DNS hostname; the base URL is built as https://<hostname>
                     (unset locally -> http://localhost:8080).
   STORAGE_BACKEND, ...  Passed through to the local `run` command.

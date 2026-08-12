@@ -163,6 +163,14 @@ export class BroadWorksMcpStack extends cdk.Stack {
     const googleClientSecret = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'GoogleClientSecret', {
       parameterName: ssmNames.googleClientSecret ?? '/broadworks-mcp/google-client-secret',
     });
+    const alpacaLicenseKey = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'AlpacaLicenseKey', {
+      parameterName: ssmNames.alpacaLicenseKey ?? '/broadworks-mcp/alpaca-license-key',
+    });
+
+    // Live BroadWorks OCI login is the app default (true). Override via context `alpacaLive` or
+    // env ALPACA_LIVE when synthesizing only if you need to force it off in a deployment.
+    const alpacaLive: string =
+      this.node.tryGetContext('alpacaLive') ?? process.env.ALPACA_LIVE ?? 'true';
 
     // ---- Container image (built from the repo root Dockerfile) ------------
     // Pin the build platform to linux/amd64 so the asset is built for the same
@@ -234,10 +242,13 @@ export class BroadWorksMcpStack extends cdk.Stack {
           AWS_REGION: this.region,
           OAUTH_REDIRECT_ALLOWLIST: oauthRedirectAllowlist,
           PUBLIC_HOSTNAME: hostname ?? '',
+          // Explicit live flag (app default is already true; false only for unusual deploys).
+          ALPACA_LIVE: alpacaLive,
         },
         secrets: {
           GOOGLE_CLIENT_ID: ecs.Secret.fromSsmParameter(googleClientId),
           GOOGLE_CLIENT_SECRET: ecs.Secret.fromSsmParameter(googleClientSecret),
+          ALPACA_LICENSE_KEY: ecs.Secret.fromSsmParameter(alpacaLicenseKey),
         },
       },
     });

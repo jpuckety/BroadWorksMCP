@@ -144,7 +144,8 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `PENDING_AUTH_TTL` | `PT15M` | Pending-authorization state lifetime. |
 | `REGISTERED_CLIENT_TTL` | `P90D` | Registered (DCR) client lifetime. |
 | `ALPACA_CONNECTION_CACHE_TTL` | `PT30M` | Idle lifetime of a cached BroadWorks connection. |
-| `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). |
+| `ALPACA_LIVE` | `true` | Live BroadWorks OCI login via `LiveAlpacaConnectionFactory`. Default on for runtime; set `false` only for tests (the test suite sets this automatically). |
+| `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). In ECS, supplied from SSM `/broadworks-mcp/alpaca-license-key`. |
 | `LOG_LEVEL_ROOT` | `INFO` | Root log level (HTTP profile). |
 | `LOG_LEVEL_APP` | `DEBUG` | Level for the application package `com.broadworks.mcp`. |
 | `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP endpoint access log (`com.broadworks.mcp.web`). |
@@ -248,10 +249,12 @@ SecureString-backed secrets injected as container env.
    ```bash
    aws ssm put-parameter --name /broadworks-mcp/google-client-id     --type SecureString --value "<client-id>"
    aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
+   aws ssm put-parameter --name /broadworks-mcp/alpaca-license-key   --type SecureString --value "<license>"
    ```
 
-   Or, if you already keep `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`,
-   push them straight into SSM (SecureString, overwriting any existing values):
+   Or, if you already keep `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
+   `ALPACA_LICENSE_KEY` in `.env`, push them straight into SSM (SecureString,
+   overwriting any existing values):
 
    ```bash
    ./run.sh push-secrets
@@ -287,17 +290,12 @@ SecureString-backed secrets injected as container env.
   connection time — no on-disk license file is required (the jar ships its own GPG key ring). An
   invalid key fails fast with a safe error. When the variable is empty the license is left to the
   provisioned runtime (license file / license manager).
-- **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery. The
-  toolkit's runtime companion (`org.apache.jcs:jcs`, the response cache) is now bundled as a normal
-  Maven dependency (with its legacy transitive back-ends excluded — only Doug Lea's `concurrent` and
-  the already-present commons-logging API are kept). Live login is **opt-in**: set
-  `ALPACA_LIVE=true` (`broadworks.alpaca.live`) to activate `LiveAlpacaConfig`, which wires the
-  toolkit's connection beans and a `LiveAlpacaConnectionFactory` that performs a real OCI login and
-  caches the `BroadWorksServer` per `(subject, resourceId)`. It still requires a **reachable
-  BroadWorks OCI server** (and, optionally, a tuned JCS `cache.ccf` on the classpath / via
-  `-Dalpaca.cache.config`). When `ALPACA_LIVE` is unset/false (the default), the connection factory
-  resolves and validates the per-tenant resource but performs **no** live login, failing fast with a
-  safe error. All per-tenant resolution, argument mapping, and response handling are exercised
-  independently of a live server.
+- **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery and
+  is **on by default** (`ALPACA_LIVE` / `broadworks.alpaca.live`, default `true`). Apache JCS
+  (`org.apache.jcs:jcs`) is a normal Maven dependency. The CDK stack injects `ALPACA_LICENSE_KEY`
+  from SSM. You still need: (1) a stored BroadWorks connection for the user
+  (`broadworks_add_connection`), (2) a valid license, and (3) network reachability to the BroadWorks
+  OCI host/port. Unit/integration tests set `broadworks.alpaca.live=false` so they use a non-login
+  stub factory and never contact BroadWorks.
 - **Security**: PKCE (S256) is mandatory; DCR issues public clients only; secrets are KMS-encrypted
   at rest; tokens, passwords, and protocol bodies are never logged.

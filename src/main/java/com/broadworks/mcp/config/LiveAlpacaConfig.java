@@ -31,11 +31,9 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
 /**
- * Wires live BroadWorks connectivity, activated only when {@code broadworks.alpaca.live=true}
- * (env {@code ALPACA_LIVE}). When the flag is absent/false this whole configuration is skipped and
- * {@link AlpacaConfig} supplies the default {@link com.broadworks.mcp.mcp.CachingAlpacaConnectionFactory}
- * (which resolves/validates a connection but does not perform a live login), so the default runtime
- * and all tests are unaffected.
+ * Wires live BroadWorks connectivity. Active by default ({@code broadworks.alpaca.live=true}, env
+ * {@code ALPACA_LIVE}). When the flag is explicitly {@code false} (tests), this configuration is
+ * skipped and {@link AlpacaConfig} supplies a non-login {@link com.broadworks.mcp.mcp.CachingAlpacaConnectionFactory}.
  *
  * <p>The Alpaca toolkit's connection objects are ordinary Spring beans ({@code @Component}s wired by
  * constructor injection). Rather than pull in the toolkit's own {@code LibraryConfig} — which is a
@@ -50,7 +48,8 @@ import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
  * automatically.</p>
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(prefix = "broadworks.alpaca", name = "live", havingValue = "true")
+@ConditionalOnProperty(prefix = "broadworks.alpaca", name = "live", havingValue = "true",
+        matchIfMissing = true)
 @EnableConfigurationProperties(LibraryProperties.class)
 @Import({
         BroadWorksServer.class,

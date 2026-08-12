@@ -50,14 +50,14 @@ class CachingAlpacaConnectionFactoryTest {
     }
 
     @Test
-    void resolvesSingleResourceThenReportsLiveRuntimeUnavailable() {
+    void resolvesSingleResourceThenReportsLiveLoginDisabled() {
         resourceStore.put("sub-1", resource("res-1"));
 
-        // Per-tenant resolution and config mapping succeed; the live login is unavailable in this
-        // build (requires the provisioned Alpaca runtime), surfaced as a safe message.
+        // Per-tenant resolution and config mapping succeed; this non-live base class never
+        // opens an OCI session (runtime uses LiveAlpacaConnectionFactory instead).
         assertThatThrownBy(() -> factory.connect("sub-1", null))
                 .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("not available in this build");
+                .hasMessageContaining("Live BroadWorks connectivity is disabled");
     }
 
     @Test
