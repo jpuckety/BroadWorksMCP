@@ -283,7 +283,11 @@ SecureString-backed secrets injected as container env.
    The internet-facing ALB is fronted by a WAFv2 WebACL (AWS managed common + known-bad-inputs rule
    groups, a general per-IP rate limit and tighter 100 req / 5 min limits on `/oauth/register` and
    `/oauth2/token`). The tasks run non-root (uid 10001) with a read-only root filesystem; `/tmp` and
-   the JCS disk cache (`/app/.cache`) are ephemeral task volumes.
+   the JCS disk cache (`/app/.cache`) are ephemeral task volumes. Fargate creates those volumes
+   owned by `root:root` (the image's ownership is not inherited), so a short-lived root
+   `volume-init` container `chown`s them to uid 10001 and must exit successfully before the app
+   container starts — without it the JVM cannot create Tomcat's temp dir (`Unable to create
+   tempDir. java.io.tmpdir is set to /tmp`).
 
 ---
 

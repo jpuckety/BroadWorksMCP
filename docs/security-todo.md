@@ -87,8 +87,11 @@ for the lifetime of the task. Add active eviction on `alpacaProperties.connectio
 - **AWS account id in a local CDK file.** `cdk/cdk.context.json` contains account `264723482771`.
   It is currently untracked (never committed), so this is only a reminder: keep it that way — add
   it to `.gitignore` or use environment-driven lookups rather than committing cached context.
-- **Validate the read-only root filesystem on a real deploy.** Fargate ephemeral volumes are
-  created empty and their ownership is not guaranteed to inherit the image directory owner on all
-  platform versions. `/tmp` and `/app/.cache` are mounted as writable volumes and this works
-  locally under `docker run --read-only`; confirm on the first dev deploy that the JCS cache is
-  writable as uid 10001.
+- **Read-only root filesystem: mount ownership (confirmed on the first deploy).** Fargate does
+  create the ephemeral volumes empty and owned by `root:root` 0755 — the image's ownership for
+  `/tmp` and `/app/.cache` is *not* inherited — so the non-root app (uid 10001) failed at startup
+  with `WebServerException: Unable to create tempDir. java.io.tmpdir is set to /tmp`. The task
+  definition now runs a short-lived root `volume-init` container that `chown`s both mounts to
+  10001 (and `chmod 1777 /tmp`) before the app container starts (`dependsOn` condition `SUCCESS`);
+  both containers keep an immutable root filesystem. Any new writable mount must be added to that
+  fix-up list too.

@@ -14,7 +14,7 @@ import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import { DockerImageAsset, Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export interface BroadWorksMcpStackProps extends cdk.StackProps {
   /**
@@ -186,10 +186,14 @@ export class BroadWorksMcpStack extends cdk.Stack {
     // this, building on an arm64 host (e.g. Apple Silicon) produces an arm64
     // image that Fargate's default X86_64 runtime cannot execute, failing at
     // startup with "exec /usr/bin/sh: exec format error".
-    const image = ecs.ContainerImage.fromAsset(path.join(__dirname, '..', '..'), {
+    // The asset is created explicitly (rather than via ContainerImage.fromAsset) so the app
+    // container and the volume-init container below share a single build/publish of the image.
+    const imageAsset = new DockerImageAsset(this, 'ImageAsset', {
+      directory: path.join(__dirname, '..', '..'),
       file: 'Dockerfile',
       platform: Platform.LINUX_AMD64,
     });
+    const image = ecs.ContainerImage.fromDockerImageAsset(imageAsset);
 
     // Let CloudWatch Logs use the customer-managed key for the log group below. The encryption
     // context condition scopes the grant to log groups in this account/region.
@@ -298,7 +302,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
     // ---- Container hardening ----------------------------------------------
     // Immutable root filesystem; everything the JVM writes to is an explicit ephemeral volume:
     // /app/.cache holds the JCS disk cache (cache.ccf DiskPath=.cache/jcs) and /tmp the JVM's
-    // temp/hsperfdata files.
+    // temp/hsperfdata files (Tomcat's tempDir, hsperfdata, ...).
     const taskDefinition = service.taskDefinition;
     taskDefinition.addVolume({ name: 'app-cache' });
     taskDefinition.addVolume({ name: 'tmp' });
@@ -306,11 +310,47 @@ export class BroadWorksMcpStack extends cdk.Stack {
       { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
       { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
     );
-    // ReadonlyRootFilesystem is not exposed by the L2 container definition props.
-    (taskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyOverride(
-      'ContainerDefinitions.0.ReadonlyRootFilesystem',
-      true,
+
+    // Fargate creates the ephemeral volumes above empty and owned by root:root 0755 — the image's
+    // ownership/permissions for /tmp and /app/.cache are NOT carried over into the mount. Since the
+    // app container runs as the unprivileged uid 10001 (see Dockerfile), the JVM would fail at
+    // startup with "Unable to create tempDir. java.io.tmpdir is set to /tmp". A short-lived root
+    // init container therefore fixes up ownership/permissions on both mounts before the app starts.
+    const volumeInit = taskDefinition.addContainer('VolumeInit', {
+      image,
+      containerName: 'volume-init',
+      user: 'root',
+      // Not part of the serving workload: the task must not be considered unhealthy when it exits.
+      essential: false,
+      memoryReservationMiB: 64,
+      entryPoint: ['sh', '-c'],
+      command: [
+        'set -e; ' +
+          'mkdir -p /app/.cache/jcs; ' +
+          'chown -R 10001:10001 /app/.cache; ' +
+          'chown 10001:10001 /tmp; ' +
+          'chmod 1777 /tmp',
+      ],
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'volume-init', logGroup }),
+    });
+    volumeInit.addMountPoints(
+      { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
+      { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
     );
+    // Hold the app container back until the fix-up has completed successfully.
+    taskDefinition.defaultContainer!.addContainerDependencies({
+      container: volumeInit,
+      condition: ecs.ContainerDependencyCondition.SUCCESS,
+    });
+
+    // ReadonlyRootFilesystem is not exposed by the L2 container definition props, so it is applied
+    // through an escape hatch. Both containers only ever write to the mounted volumes above, hence
+    // every container definition (index 0 = the app, index 1 = volume-init, in creation order) gets
+    // an immutable root filesystem.
+    const cfnTaskDefinition = taskDefinition.node.defaultChild as ecs.CfnTaskDefinition;
+    for (const index of [0, 1]) {
+      cfnTaskDefinition.addPropertyOverride(`ContainerDefinitions.${index}.ReadonlyRootFilesystem`, true);
+    }
 
     // ---- WAF (internet-facing ALB) ----------------------------------------
     const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
