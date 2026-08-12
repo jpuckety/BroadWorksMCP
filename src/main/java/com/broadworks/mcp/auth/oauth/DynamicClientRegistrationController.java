@@ -28,8 +28,8 @@ import org.springframework.web.server.ResponseStatusException;
  * <b>public clients</b> (no client secret is ever issued). Registered clients are persisted durably
  * via the {@link SessionStore} with the configured lifetime.
  *
- * <p>Redirect URIs are validated against the allow-list: HTTPS URIs must match a configured prefix;
- * loopback HTTP and custom desktop schemes are always permitted.</p>
+ * <p>Redirect URIs are validated against the allow-list: HTTPS and custom-scheme URIs must match a
+ * configured prefix; loopback HTTP is always permitted.</p>
  */
 @RestController
 @RequiredArgsConstructor

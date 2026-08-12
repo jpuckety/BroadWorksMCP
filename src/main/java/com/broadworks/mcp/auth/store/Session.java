@@ -11,7 +11,7 @@ import java.time.Instant;
  *
  * @param sessionId              opaque session identifier (equals the access token in this impl).
  * @param accessToken            opaque bearer access token presented to the Resource Server.
- * @param refreshToken           opaque refresh token exchanged at {@code /oauth/token}.
+ * @param refreshToken           opaque refresh token exchanged at {@code /oauth2/token}.
  * @param clientId               id of the registered client the tokens were issued to.
  * @param subject                upstream IdP {@code sub}; the canonical per-tenant user id.
  * @param email                  upstream IdP verified email (informational only).
@@ -20,6 +20,10 @@ import java.time.Instant;
  * @param accessTokenExpiresAt   access-token expiry (capped by the IdP ID-token expiry).
  * @param refreshTokenExpiresAt  refresh-token expiry.
  * @param createdAt              session creation timestamp.
+ * @param authorizationId        SAS {@code OAuth2Authorization} id this session was issued from;
+ *                               used to invalidate prior access-token sessions on rotation.
+ * @param audience               RFC 8707 resource audience this access token is bound to
+ *                               (canonical MCP resource URL).
  */
 public record Session(
         String sessionId,
@@ -32,7 +36,9 @@ public record Session(
         String idpRefreshToken,
         Instant accessTokenExpiresAt,
         Instant refreshTokenExpiresAt,
-        Instant createdAt
+        Instant createdAt,
+        String authorizationId,
+        String audience
 ) {
     public Session {
         if (accessToken == null || accessToken.isBlank()) {

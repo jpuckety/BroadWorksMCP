@@ -72,7 +72,7 @@ public class StoreBackedRegisteredClientRepository implements RegisteredClientRe
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
                 .clientSettings(ClientSettings.builder()
                         .requireProofKey(true)              // PKCE mandatory
-                        .requireAuthorizationConsent(false)
+                        .requireAuthorizationConsent(true)  // DCR + static Google client
                         .build())
                 .tokenSettings(TokenSettings.builder()
                         .accessTokenFormat(OAuth2TokenFormat.REFERENCE) // opaque access tokens

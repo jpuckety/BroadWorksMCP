@@ -132,7 +132,8 @@ class DynamoDbStoresIT {
         final Instant now = Instant.now();
         final Session session = new Session(null, "acc-1", "ref-1", "client-1", "sub-1",
                 "sub-1@example.com", "idt", "idpref",
-                now.plus(Duration.ofHours(1)), now.plus(Duration.ofDays(30)), now);
+                now.plus(Duration.ofHours(1)), now.plus(Duration.ofDays(30)), now,
+                "authz-1", "http://localhost:8080/mcp");
 
         store.createSession(session);
 

@@ -5,8 +5,8 @@ import java.util.Optional;
 /**
  * Durable store for OAuth sessions and dynamically registered clients.
  *
- * <p>Authorization codes and pending authorizations are intentionally NOT part of this interface:
- * they are short-lived and remain process-local.</p>
+ * <p>Authorization codes and pending authorizations live in {@link AuthorizationStore}, not here.
+ * This store holds the opaque access/refresh token sessions the Resource Server introspects.</p>
  */
 public interface SessionStore {
 
@@ -34,12 +34,18 @@ public interface SessionStore {
     void deleteSession(String sessionId);
 
     /**
+     * Deletes every session issued under the given SAS authorization id (token rotation).
+     * No-op if none exist.
+     */
+    void deleteSessionsByAuthorizationId(String authorizationId);
+
+    /**
      * Persists (creates or replaces) a registered client.
      */
     void saveClient(RegisteredClientRecord client);
 
     /**
-     * @return the registered client with the given id, if present.
+     * @return the registered client with the given id, if present and not expired.
      */
     Optional<RegisteredClientRecord> getClient(String clientId);
 }

@@ -1,8 +1,12 @@
 package com.broadworks.mcp.config;
 
+import java.util.function.Consumer;
+
 import com.broadworks.mcp.auth.session.OpaqueTokenFactory;
+import com.broadworks.mcp.auth.session.StoreBackedAuthorizationConsentService;
 import com.broadworks.mcp.auth.session.StoreBackedAuthorizationService;
 import com.broadworks.mcp.auth.session.StoreBackedRegisteredClientRepository;
+import com.broadworks.mcp.auth.store.AuthorizationStore;
 import com.broadworks.mcp.auth.store.SessionStore;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -12,37 +16,42 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationContext;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationProvider;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationToken;
+import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationValidator;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.config.annotation.web.configurers.oauth2.server.authorization.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
+import org.springframework.util.StringUtils;
 
 /**
  * Spring Authorization Server configuration.
  *
- * <p>Uses SAS <b>default</b> endpoints ({@code /oauth2/authorize}, {@code /oauth2/token},
- * {@code /oauth2/jwks}, discovery at {@code /.well-known/oauth-authorization-server}) per the updated
- * Step 4 decision. Clients and issued sessions are backed by the pluggable {@link SessionStore};
- * access tokens are opaque (REFERENCE). Unauthenticated browser hits on the authorize endpoint are
- * redirected to Google login.</p>
- *
- * <p>The authorization-server discovery document is customized to advertise the custom RFC 7591
- * Dynamic Client Registration endpoint ({@code /oauth/register}). Without this, MCP clients that
- * discover the server via RFC 8414 metadata cannot find where to register and therefore never reach
- * the authorization endpoint that initiates the interactive Google login. The issuer is pinned to
- * the configured public base URL so the advertised endpoints stay consistent with the protected
- * resource metadata (RFC 9728) regardless of the request host (e.g. behind a proxy/load balancer).</p>
+ * <p>Uses SAS default endpoints ({@code /oauth2/authorize}, {@code /oauth2/token},
+ * {@code /oauth2/jwks}, discovery at {@code /.well-known/oauth-authorization-server}). Authorizations
+ * and consents are durable via {@link AuthorizationStore}; issued sessions via {@link SessionStore}.
+ * Unauthenticated browser hits on the authorize endpoint redirect to Google login. Per-client consent
+ * is required for DCR clients.</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerConfig {
 
     /** RFC 7591 Dynamic Client Registration path served by the custom controller. */
     private static final String REGISTRATION_ENDPOINT_PATH = "/oauth/register";
+
+    /** RFC 8707 error code for invalid resource indicator. */
+    private static final String INVALID_TARGET = "invalid_target";
 
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -53,28 +62,60 @@ public class AuthorizationServerConfig {
         final OAuth2AuthorizationServerConfigurer authorizationServer =
                 new OAuth2AuthorizationServerConfigurer();
         final String registrationEndpoint = publicBaseUrl.baseUrl() + REGISTRATION_ENDPOINT_PATH;
+        final String canonicalResource = publicBaseUrl.mcpResourceUrl();
         http
                 .securityMatcher(authorizationServer.getEndpointsMatcher())
                 .with(authorizationServer, server -> server
                         .oidc(Customizer.withDefaults())
-                        // Advertise the custom dynamic client registration endpoint (RFC 7591) in the
-                        // RFC 8414 authorization-server metadata so MCP clients can register and proceed.
-                        //
-                        // Also advertise `none` in token_endpoint_auth_methods_supported. MCP clients
-                        // register dynamically as public clients (no client secret, PKCE-protected), so
-                        // they authenticate to the token endpoint with method "none". SAS only advertises
-                        // client_secret_basic/client_secret_post by default; strict clients inspect this
-                        // list and refuse to proceed unless "none" is present, so we add it explicitly.
+                        .authorizationEndpoint(endpoint -> endpoint
+                                .consentPage("/oauth2/consent")
+                                .authenticationProviders(providers ->
+                                        configureResourceValidators(providers, canonicalResource)))
                         .authorizationServerMetadataEndpoint(metadata -> metadata
                                 .authorizationServerMetadataCustomizer(builder -> builder
                                         .clientRegistrationEndpoint(registrationEndpoint)
                                         .tokenEndpointAuthenticationMethod("none"))))
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
-                // For browser clients hitting the authorize endpoint unauthenticated, start Google login.
                 .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
                         new LoginUrlAuthenticationEntryPoint("/oauth2/authorization/google"),
                         new MediaTypeRequestMatcher(MediaType.TEXT_HTML)));
         return http.build();
+    }
+
+    /**
+     * Reject authorize requests whose RFC 8707 {@code resource} does not match the canonical MCP
+     * resource. Composes with SAS default redirect_uri / scope validators.
+     */
+    private static void configureResourceValidators(java.util.List<AuthenticationProvider> providers,
+                                                    String canonicalResource) {
+        for (AuthenticationProvider provider : providers) {
+            if (provider instanceof OAuth2AuthorizationCodeRequestAuthenticationProvider codeProvider) {
+                final Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> defaults =
+                        new OAuth2AuthorizationCodeRequestAuthenticationValidator();
+                codeProvider.setAuthenticationValidator(
+                        defaults.andThen(resourceValidator(canonicalResource)));
+            }
+        }
+    }
+
+    private static Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> resourceValidator(
+            String canonicalResource) {
+        return context -> {
+            final OAuth2AuthorizationCodeRequestAuthenticationToken authentication =
+                    context.getAuthentication();
+            final Object resource = authentication.getAdditionalParameters()
+                    .get(StoreBackedAuthorizationService.RESOURCE_PARAMETER);
+            if (resource == null || !StringUtils.hasText(resource.toString())) {
+                return;
+            }
+            if (!PublicBaseUrlProperties.resourceMatches(resource.toString(), canonicalResource)) {
+                final OAuth2Error error = new OAuth2Error(
+                        INVALID_TARGET,
+                        "The requested resource does not match this authorization server's MCP resource",
+                        null);
+                throw new OAuth2AuthorizationCodeRequestAuthenticationException(error, authentication);
+            }
+        };
     }
 
     @Bean
@@ -91,16 +132,22 @@ public class AuthorizationServerConfig {
 
     @Bean
     @ConditionalOnMissingBean(OAuth2AuthorizationService.class)
-    public OAuth2AuthorizationService authorizationService(SessionStore sessionStore) {
-        return new StoreBackedAuthorizationService(sessionStore);
+    public OAuth2AuthorizationService authorizationService(AuthorizationStore authorizationStore,
+                                                           SessionStore sessionStore,
+                                                           PublicBaseUrlProperties publicBaseUrl) {
+        return new StoreBackedAuthorizationService(authorizationStore, sessionStore, publicBaseUrl);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(OAuth2AuthorizationConsentService.class)
+    public OAuth2AuthorizationConsentService authorizationConsentService(
+            AuthorizationStore authorizationStore) {
+        return new StoreBackedAuthorizationConsentService(authorizationStore);
     }
 
     @Bean
     @ConditionalOnMissingBean(AuthorizationServerSettings.class)
     public AuthorizationServerSettings authorizationServerSettings(PublicBaseUrlProperties publicBaseUrl) {
-        // SAS default endpoints (Google/SAS defaults per updated Step 4 decision). The issuer is pinned
-        // to the public base URL so discovery metadata advertises the externally reachable endpoints
-        // (consistent with the protected resource metadata) instead of the raw request host.
         return AuthorizationServerSettings.builder()
                 .issuer(publicBaseUrl.baseUrl())
                 .build();

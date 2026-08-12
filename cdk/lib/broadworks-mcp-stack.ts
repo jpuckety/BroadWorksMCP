@@ -249,14 +249,15 @@ export class BroadWorksMcpStack extends cdk.Stack {
       interval: cdk.Duration.seconds(30),
     });
 
-    // No ALB session stickiness is required. The interactive Google sign-in (Spring Security
-    // `oauth2Login` + Spring Authorization Server) is stateful -- the transient OAuth2 authorization
-    // request, the `SecurityContext`, and the saved request live in the HTTP session -- but that HTTP
-    // session is now stored in DynamoDB via Spring Session (see HttpSessionConfig /
-    // DynamoDbHttpSessionRepository), not in a single task's memory. Any of the `desiredCount` tasks
-    // can therefore serve any step of the `/oauth2/authorization/google` -> `/login/oauth2/code/google`
-    // -> `/oauth2/authorize` handshake, and the login session also survives task restarts / redeploys.
-    // (Cookie stickiness was previously required here and would not work for native MCP clients, which
+    // No ALB session stickiness is required. Multi-instance OAuth is durable in DynamoDB:
+    // - Interactive Google sign-in HTTP sessions (SecurityContext / saved request) via Spring Session
+    //   (HttpSessionConfig / DynamoDbHttpSessionRepository).
+    // - SAS authorizations (auth codes, refresh grants) and consents via DynamoDbAuthorizationStore
+    //   in the same sessions table (oauth# / oauthtok# / oauthconsent# prefixes).
+    // - Issued opaque access-token sessions via DynamoDbSessionStore (including token rotation).
+    // Any of the `desiredCount` tasks can therefore serve any step of the
+    // `/oauth2/authorization/google` -> `/login/oauth2/code/google` -> `/oauth2/authorize` ->
+    // `/oauth2/token` handshake. (Cookie stickiness would not work for native MCP clients, which
     // do not honor the ALB cookie.)
 
     // ---- DNS records ------------------------------------------------------

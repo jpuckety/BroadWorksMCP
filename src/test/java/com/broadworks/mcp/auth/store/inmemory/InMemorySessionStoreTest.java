@@ -22,10 +22,14 @@ class InMemorySessionStoreTest {
     }
 
     private Session session(String access, String refresh, String subject) {
+        return session(access, refresh, subject, null);
+    }
+
+    private Session session(String access, String refresh, String subject, String authorizationId) {
         final Instant now = Instant.now();
         return new Session(null, access, refresh, "client-1", subject, subject + "@example.com",
                 "id-token", "idp-refresh", now.plus(Duration.ofHours(1)),
-                now.plus(Duration.ofDays(30)), now);
+                now.plus(Duration.ofDays(30)), now, authorizationId, "http://localhost:8080/mcp");
     }
 
     @Test
@@ -80,5 +84,32 @@ class InMemorySessionStoreTest {
                     assertThat(c.grantTypes()).contains("refresh_token");
                 });
         assertThat(store.getClient("nope")).isEmpty();
+    }
+
+    @Test
+    void deleteSessionsByAuthorizationIdRemovesPriorAccessToken() {
+        store.createSession(session("access-old", "refresh-1", "sub-5", "authz-rot"));
+        store.createSession(session("access-new", "refresh-1", "sub-5", "authz-rot"));
+
+        assertThat(store.getSessionByAccessToken("access-old")).isEmpty();
+        assertThat(store.getSessionByAccessToken("access-new")).isPresent();
+
+        store.deleteSessionsByAuthorizationId("authz-rot");
+        assertThat(store.getSessionByAccessToken("access-new")).isEmpty();
+    }
+
+    @Test
+    void expiredClientIsNotReturned() {
+        final RegisteredClientRecord client = new RegisteredClientRecord(
+                "client-expired", "Expired",
+                List.of("http://127.0.0.1/cb"),
+                List.of("openid"),
+                List.of("authorization_code"),
+                null, Instant.now().minus(Duration.ofDays(100)),
+                Instant.now().minus(Duration.ofDays(10)));
+
+        store.saveClient(client);
+
+        assertThat(store.getClient("client-expired")).isEmpty();
     }
 }

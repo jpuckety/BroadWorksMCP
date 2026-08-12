@@ -14,9 +14,15 @@ import org.springframework.security.config.oauth2.client.CommonOAuth2Provider;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.core.authority.mapping.GrantedAuthoritiesMapper;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.server.resource.introspection.OpaqueTokenIntrospector;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -33,7 +39,7 @@ import java.util.Set;
  *   <li>Discovery / metadata, dynamic client registration, health, and the Google login entry points
  *       are public.</li>
  *   <li>Interactive Google sign-in is available via {@code oauth2Login} (default redirection endpoint
- *       {@code /login/oauth2/code/google}).</li>
+ *       {@code /login/oauth2/code/google}). Unverified Google emails are rejected.</li>
  * </ul>
  */
 @Configuration(proxyBeanMethods = false)
@@ -67,16 +73,6 @@ public class SecurityConfig {
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .authenticationEntryPoint(bearerChallengeEntryPoint)
                         .opaqueToken(opaque -> opaque.introspector(opaqueTokenIntrospector))
-                        // Spring Security 7 publishes RFC 9728 protected-resource metadata at
-                        // /.well-known/oauth-protected-resource itself. Customize it to advertise this
-                        // server as the resource and point clients at the authorization server (issuer),
-                        // pinned to the external base URL. Replaces the previous custom controller.
-                        //
-                        // The advertised `resource` is the canonical URL of the protected resource --
-                        // the MCP endpoint itself (`<baseUrl>/mcp`) -- rather than the bare base URL, so
-                        // it matches the audience the bearer token is actually presented at. Strict MCP
-                        // clients (RFC 9728) validate that the resource in the metadata equals the URL
-                        // they are calling, so advertising `<baseUrl>/mcp` keeps that check happy.
                         .protectedResourceMetadata(metadata -> metadata
                                 .protectedResourceMetadataCustomizer(builder -> builder
                                         .resource(baseUrl + "/mcp")
@@ -84,40 +80,43 @@ public class SecurityConfig {
                                         .scope("openid")
                                         .scope("email")
                                         .scope("profile"))))
-                // Interactive Google sign-in. A custom user-authorities mapper appends a
-                // FactorGrantedAuthority (FACTOR_AUTHORIZATION_CODE) to the authenticated principal.
-                //
-                // Why this is required: Google login uses OIDC, so Spring Security's
-                // OidcAuthorizationCodeAuthenticationProvider produces the principal. Unlike the plain
-                // OAuth2LoginAuthenticationProvider (which stamps FACTOR_AUTHORIZATION_CODE itself), the
-                // OIDC provider does NOT add any FactorGrantedAuthority. When this login principal is later
-                // reused by the Authorization Server at POST /oauth/token to mint the downstream OIDC
-                // ID token, Spring Security 7's JwtGenerator derives the ID token's auth_time claim solely
-                // from the newest FactorGrantedAuthority#issuedAt on the principal. With none present it
-                // throws "IllegalArgumentException: authenticationTime cannot be null", failing token
-                // issuance with a 500. Adding the factor here (issuedAt defaults to login time) restores it.
                 .oauth2Login(oauth2 -> oauth2
                         .userInfoEndpoint(userInfo -> userInfo
-                                .userAuthoritiesMapper(factorStampingAuthoritiesMapper())))
+                                .userAuthoritiesMapper(factorStampingAuthoritiesMapper())
+                                .oidcUserService(oidcUserService())))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(bearerChallengeEntryPoint))
-                // Bearer APIs are stateless; disable CSRF for them (login flow is redirect-based).
+                // Bearer APIs are stateless; disable CSRF (login + consent are form/redirect based).
                 .csrf(csrf -> csrf.disable());
         return http.build();
     }
 
     /**
      * {@link GrantedAuthoritiesMapper} that preserves the mapped OIDC/OAuth2 authorities and adds a
-     * {@link FactorGrantedAuthority} for the authorization-code factor. This is wired into both the
-     * OIDC and non-OIDC login providers by {@code oauth2Login}, ensuring the authenticated principal
-     * always carries the authentication-factor marker that Spring Security 7's {@code JwtGenerator}
-     * needs to compute the ID token {@code auth_time} claim.
+     * {@link FactorGrantedAuthority} for the authorization-code factor (needed for SAS ID token
+     * {@code auth_time}).
      */
     static GrantedAuthoritiesMapper factorStampingAuthoritiesMapper() {
         return authorities -> {
             Set<GrantedAuthority> mapped = new LinkedHashSet<>(authorities);
             mapped.add(FactorGrantedAuthority.fromAuthority(FactorGrantedAuthority.AUTHORIZATION_CODE_AUTHORITY));
             return mapped;
+        };
+    }
+
+    /**
+     * Rejects Google logins when {@code email_verified} is not {@code true}.
+     */
+    private OAuth2UserService<OidcUserRequest, OidcUser> oidcUserService() {
+        final OidcUserService delegate = new OidcUserService();
+        return userRequest -> {
+            final OidcUser oidcUser = delegate.loadUser(userRequest);
+            if (!Boolean.TRUE.equals(oidcUser.getEmailVerified())) {
+                throw new OAuth2AuthenticationException(
+                        new OAuth2Error("email_not_verified"),
+                        "Identity verification failed: your Google email address is not verified.");
+            }
+            return oidcUser;
         };
     }
 
@@ -129,8 +128,9 @@ public class SecurityConfig {
 
     @Bean
     @ConditionalOnMissingBean(OpaqueTokenIntrospector.class)
-    public OpaqueTokenIntrospector opaqueTokenIntrospector(SessionStore sessionStore) {
-        return new StoreOpaqueTokenIntrospector(sessionStore);
+    public OpaqueTokenIntrospector opaqueTokenIntrospector(SessionStore sessionStore,
+                                                           PublicBaseUrlProperties publicBaseUrl) {
+        return new StoreOpaqueTokenIntrospector(sessionStore, publicBaseUrl);
     }
 
     /**

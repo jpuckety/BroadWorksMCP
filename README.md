@@ -137,7 +137,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `KMS_KEY_ID` | *(empty)* | Customer-managed KMS key id/ARN for secret encryption (required for `DYNAMODB`). |
 | `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
 | `APPLICATION_ID` | `broadworks-mcp` | Partition key for the per-user resource table. |
-| `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma/space list of allowed HTTPS redirect-URI prefixes (loopback + custom schemes always allowed). |
+| `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma-separated list of allowed redirect-URI prefixes for HTTPS **and** custom schemes (e.g. `https://app.example.com/,cursor://`). Loopback HTTP (`127.0.0.1` / `localhost`) is always allowed. |
 | `ACCESS_TOKEN_TTL` | `PT1H` | Opaque access-token lifetime (capped by IdP ID-token expiry). |
 | `REFRESH_TOKEN_TTL` | `P30D` | Refresh-token lifetime. |
 | `AUTH_CODE_TTL` | `PT5M` | One-time authorization-code lifetime. |
@@ -190,16 +190,26 @@ the MCP protocol).
 ## End-to-end auth flow
 
 1. An unauthenticated MCP call returns **401** with
-   `WWW-Authenticate: Bearer realm="mcp", resource_metadata="https://<hostname>/.well-known/oauth-protected-resource"`.
+   `WWW-Authenticate: Bearer realm="mcp", resource_metadata="https://<hostname>/.well-known/oauth-protected-resource/mcp"`
+   (RFC 9728; the protected resource is `<baseUrl>/mcp`).
 2. The client performs **Dynamic Client Registration** (`POST /oauth/register`, public client, no
    secret), then an OAuth 2.1 **authorization-code + PKCE (S256)** flow at `/oauth2/authorize`.
-3. The AS redirects to **Google**; on the callback the Google **ID token is verified** (JWKS
-   signature, `aud`, `iss`, `exp`, `sub` present, `email_verified == true`).
-4. The client exchanges the code at `/oauth2/token` and receives an **opaque** access token
-   (+ refresh token). A durable **session** is persisted keyed by the access-token value.
-5. Subsequent MCP calls send `Authorization: Bearer <opaque token>`. The Resource Server introspects
-   the token **locally** against the session store and injects `UserInfo{subject,email}` into the
-   tool context. All per-tenant state is keyed by `subject` (never email).
+   Optional RFC 8707 `resource` must match the canonical MCP URL (`https://<hostname>/mcp`).
+3. The AS redirects to **Google**; on the callback Spring Security verifies the ID token and
+   **rejects** logins when `email_verified` is not true.
+4. **First use of a DCR client** shows an MCP consent page (`/oauth2/consent`) with the client name,
+   scopes, and redirect URI. Subsequent authorizations for the same client+user reuse stored consent.
+5. The client exchanges the code at `/oauth2/token` and receives an **opaque** access token
+   (+ refresh token). A durable **session** is persisted keyed by the access-token value, bound to
+   audience `<baseUrl>/mcp`. Refresh rotation invalidates the previous access-token session.
+6. Subsequent MCP calls send `Authorization: Bearer <opaque token>`. The Resource Server introspects
+   the token **locally** against the session store (existence, expiry, **audience**), then injects
+   `UserInfo{subject,email}` into the tool context. All per-tenant state is keyed by `subject`
+   (never email).
+
+**Multi-instance:** With `STORAGE_BACKEND=DYNAMODB` and ECS `desiredCount ≥ 2` (no ALB stickiness),
+HTTP login sessions, SAS authorizations/consents, and issued opaque-token sessions are all shared
+via DynamoDB, so authorize on task A and token exchange / refresh on task B succeeds.
 
 Registering a public client:
 

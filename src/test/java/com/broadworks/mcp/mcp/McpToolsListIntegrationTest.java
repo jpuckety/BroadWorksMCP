@@ -41,7 +41,8 @@ class McpToolsListIntegrationTest {
     void toolsListReturnsAllBroadWorksToolsOverStatelessHttp() throws Exception {
         sessionStore.createSession(new Session(null, "tok-mcp", null, "client-1", "sub-mcp",
                 "user@example.com", null, null,
-                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now()));
+                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now(),
+                "authz-mcp", "http://localhost:8080/mcp"));
 
         final HttpClient client = HttpClient.newHttpClient();
         final String base = "http://localhost:" + port + "/mcp";

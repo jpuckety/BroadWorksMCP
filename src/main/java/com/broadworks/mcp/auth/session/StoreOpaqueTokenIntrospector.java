@@ -7,6 +7,7 @@ import java.util.Map;
 
 import com.broadworks.mcp.auth.store.Session;
 import com.broadworks.mcp.auth.store.SessionStore;
+import com.broadworks.mcp.config.PublicBaseUrlProperties;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,19 +19,14 @@ import org.springframework.security.oauth2.server.resource.introspection.OpaqueT
 
 /**
  * Resolves opaque bearer access tokens <b>locally</b> against the {@link SessionStore} (no network
- * introspection). Since the Authorization Server and Resource Server share a process/datastore, a
- * valid token maps to a persisted {@link Session}; the resulting principal carries {@code sub} and
- * {@code email} attributes consumed by {@link UserContext}.
- *
- * <p>Introspection outcomes are logged to aid troubleshooting of {@code 401} responses: the reason a
- * token was rejected (unknown / expired) at {@code WARN}, and successful resolution at {@code DEBUG}.
- * The token value itself is <b>never</b> logged.</p>
+ * introspection). Validates expiry and RFC 8707 audience (canonical MCP resource).
  */
 @Slf4j
 @RequiredArgsConstructor
 public class StoreOpaqueTokenIntrospector implements OpaqueTokenIntrospector {
 
     private final SessionStore sessionStore;
+    private final PublicBaseUrlProperties publicBaseUrl;
 
     @Override
     public OAuth2AuthenticatedPrincipal introspect(String token) {
@@ -39,6 +35,14 @@ public class StoreOpaqueTokenIntrospector implements OpaqueTokenIntrospector {
                     log.warn("Bearer token introspection failed: token is not active (no matching session)");
                     return new BadOpaqueTokenException("Provided token is not active");
                 });
+
+        final String canonical = publicBaseUrl.mcpResourceUrl();
+        if (session.audience() == null || session.audience().isBlank()
+                || !PublicBaseUrlProperties.resourceMatches(session.audience(), canonical)) {
+            log.warn("Bearer token introspection failed: audience mismatch for subject={}. Expected={}, Found={}",
+                    session.subject(), canonical, session.audience());
+            throw new BadOpaqueTokenException("Provided token is not authorized for this resource");
+        }
 
         final Instant expiresAt = session.accessTokenExpiresAt();
         if (expiresAt != null && Instant.now().isAfter(expiresAt)) {
@@ -53,6 +57,7 @@ public class StoreOpaqueTokenIntrospector implements OpaqueTokenIntrospector {
             attributes.put(UserInfo.EMAIL_ATTRIBUTE, session.email());
         }
         attributes.put("active", true);
+        attributes.put("aud", session.audience());
 
         final List<org.springframework.security.core.GrantedAuthority> authorities =
                 AuthorityUtils.NO_AUTHORITIES;

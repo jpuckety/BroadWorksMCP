@@ -99,7 +99,8 @@ class OAuthSecurityIntegrationTest {
     void validBearerTokenResolvesUserInfo() throws Exception {
         sessionStore.createSession(new Session(null, "tok-valid", null, "client-1", "sub-1",
                 "user@example.com", null, null,
-                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now()));
+                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now(),
+                "authz-1", "http://localhost:8080/mcp"));
 
         mockMvc.perform(get("/whoami").header(HttpHeaders.AUTHORIZATION, "Bearer tok-valid"))
                 .andExpect(status().isOk())
@@ -111,7 +112,8 @@ class OAuthSecurityIntegrationTest {
     void expiredBearerTokenIsRejected() throws Exception {
         sessionStore.createSession(new Session(null, "tok-expired", null, "client-1", "sub-2",
                 "user2@example.com", null, null,
-                Instant.now().minus(1, ChronoUnit.HOURS), null, Instant.now()));
+                Instant.now().minus(1, ChronoUnit.HOURS), null, Instant.now(),
+                "authz-2", "http://localhost:8080/mcp"));
 
         mockMvc.perform(get("/whoami").header(HttpHeaders.AUTHORIZATION, "Bearer tok-expired"))
                 .andExpect(status().isUnauthorized());
@@ -121,5 +123,38 @@ class OAuthSecurityIntegrationTest {
     void unknownBearerTokenIsRejected() throws Exception {
         mockMvc.perform(get("/whoami").header(HttpHeaders.AUTHORIZATION, "Bearer nope"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void bearerTokenWithWrongAudienceIsRejected() throws Exception {
+        sessionStore.createSession(new Session(null, "tok-wrong-aud", null, "client-1", "sub-3",
+                "user3@example.com", null, null,
+                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now(),
+                "authz-3", "https://evil.example.com/mcp"));
+
+        mockMvc.perform(get("/whoami").header(HttpHeaders.AUTHORIZATION, "Bearer tok-wrong-aud"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void bearerTokenWithMissingAudienceIsRejected() throws Exception {
+        sessionStore.createSession(new Session(null, "tok-no-aud", null, "client-1", "sub-4",
+                "user4@example.com", null, null,
+                Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now(),
+                "authz-4", null));
+
+        mockMvc.perform(get("/whoami").header(HttpHeaders.AUTHORIZATION, "Bearer tok-no-aud"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void dynamicClientRegistrationRejectsNonAllowlistedCustomScheme() throws Exception {
+        final String body = """
+                {"redirect_uris":["cursor://auth/callback"],"client_name":"Cursor"}""";
+
+        mockMvc.perform(post("/oauth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
     }
 }

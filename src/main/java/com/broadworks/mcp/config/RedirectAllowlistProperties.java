@@ -8,23 +8,26 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Allow-list controlling which client redirect URIs may be registered / used.
  *
- * <p>HTTPS redirect URIs must appear in {@link #allowedHttpsPrefixes()}. Loopback HTTP
- * ({@code http://127.0.0.1}, {@code http://localhost}) and non-HTTP custom schemes (desktop clients)
- * are always allowed, per OAuth 2.1 native-app guidance.</p>
+ * <p>HTTPS redirect URIs and non-HTTP custom schemes (desktop clients) must match a prefix in
+ * {@link #allowedHttpsPrefixes()} (env {@code OAUTH_REDIRECT_ALLOWLIST}). Loopback HTTP
+ * ({@code http://127.0.0.1}, {@code http://localhost}, {@code [::1]}) is always allowed per OAuth
+ * 2.1 native-app guidance.</p>
  *
- * @param allowedHttpsPrefixes list of allowed HTTPS redirect-URI prefixes.
+ * @param allowedHttpsPrefixes list of allowed redirect-URI prefixes (HTTPS and custom schemes).
  */
 @ConfigurationProperties(prefix = "broadworks.auth.redirect")
 public record RedirectAllowlistProperties(
         List<String> allowedHttpsPrefixes
 ) {
     public RedirectAllowlistProperties {
-        allowedHttpsPrefixes = allowedHttpsPrefixes == null ? List.of() : List.copyOf(allowedHttpsPrefixes);
+        allowedHttpsPrefixes = allowedHttpsPrefixes == null
+                ? List.of()
+                : allowedHttpsPrefixes.stream().filter(p -> p != null && !p.isBlank()).toList();
     }
 
     /**
-     * @return {@code true} if the supplied redirect URI is permitted: any loopback HTTP address, any
-     * non-HTTP custom scheme, or an HTTPS URI matching a configured prefix.
+     * @return {@code true} if the supplied redirect URI is permitted: any loopback HTTP address, or
+     * a URI (HTTPS or custom scheme) matching a configured prefix.
      */
     public boolean isAllowed(String redirectUri) {
         if (redirectUri == null || redirectUri.isBlank()) {
@@ -40,9 +43,6 @@ public record RedirectAllowlistProperties(
         if (scheme == null) {
             return false;
         }
-        if ("https".equalsIgnoreCase(scheme)) {
-            return allowedHttpsPrefixes.stream().anyMatch(redirectUri::startsWith);
-        }
         if ("http".equalsIgnoreCase(scheme)) {
             final String host = uri.getHost();
             return "localhost".equalsIgnoreCase(host)
@@ -50,7 +50,7 @@ public record RedirectAllowlistProperties(
                     || "[::1]".equals(host)
                     || "::1".equals(host);
         }
-        // Custom scheme (e.g. desktop app deep link) is allowed.
-        return true;
+        // HTTPS and custom schemes (e.g. cursor://) require an allow-list prefix match.
+        return allowedHttpsPrefixes.stream().anyMatch(redirectUri::startsWith);
     }
 }

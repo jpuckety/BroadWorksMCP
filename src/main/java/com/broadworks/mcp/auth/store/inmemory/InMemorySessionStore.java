@@ -1,5 +1,6 @@
 package com.broadworks.mcp.auth.store.inmemory;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -19,10 +20,17 @@ public class InMemorySessionStore implements SessionStore {
     private final ConcurrentMap<String, Session> sessionsById = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> sessionIdByAccessToken = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> sessionIdByRefreshToken = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> sessionIdByAuthorizationId = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, RegisteredClientRecord> clientsById = new ConcurrentHashMap<>();
 
     @Override
     public Session createSession(Session session) {
+        if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
+            final String previous = sessionIdByAuthorizationId.put(session.authorizationId(), session.sessionId());
+            if (previous != null && !previous.equals(session.sessionId())) {
+                deleteSession(previous);
+            }
+        }
         sessionsById.put(session.sessionId(), session);
         sessionIdByAccessToken.put(session.accessToken(), session.sessionId());
         if (session.refreshToken() != null) {
@@ -58,6 +66,20 @@ public class InMemorySessionStore implements SessionStore {
             if (removed.refreshToken() != null) {
                 sessionIdByRefreshToken.remove(removed.refreshToken());
             }
+            if (removed.authorizationId() != null) {
+                sessionIdByAuthorizationId.remove(removed.authorizationId(), sessionId);
+            }
+        }
+    }
+
+    @Override
+    public void deleteSessionsByAuthorizationId(String authorizationId) {
+        if (authorizationId == null) {
+            return;
+        }
+        final String sessionId = sessionIdByAuthorizationId.remove(authorizationId);
+        if (sessionId != null) {
+            deleteSession(sessionId);
         }
     }
 
@@ -71,6 +93,14 @@ public class InMemorySessionStore implements SessionStore {
         if (clientId == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(clientsById.get(clientId));
+        final RegisteredClientRecord client = clientsById.get(clientId);
+        if (client == null) {
+            return Optional.empty();
+        }
+        if (client.expiresAt() != null && Instant.now().isAfter(client.expiresAt())) {
+            clientsById.remove(clientId, client);
+            return Optional.empty();
+        }
+        return Optional.of(client);
     }
 }

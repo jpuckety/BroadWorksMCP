@@ -26,8 +26,9 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  * <p>Layout: partition key {@code pk} carries {@code sess#<sessionId>} or {@code client#<clientId>}
  * prefixes with a {@code type} discriminator. Because the opaque-token model uses the access token
  * as the session id, {@code getSessionByAccessToken} is a direct {@code GetItem}. Lookup by refresh
- * token uses the {@code refresh-index} GSI (partition key {@code refreshToken}). A numeric
- * {@code ttl} attribute enables native DynamoDB expiry.</p>
+ * token uses the {@code refresh-index} GSI (partition key {@code refreshToken}). Token rotation uses
+ * reverse pointer items {@code authz-sess#<authorizationId>} (no extra GSI). A numeric {@code ttl}
+ * attribute enables native DynamoDB expiry.</p>
  */
 public class DynamoDbSessionStore implements SessionStore {
 
@@ -35,6 +36,7 @@ public class DynamoDbSessionStore implements SessionStore {
     static final String TYPE = "type";
     static final String SESSION_PREFIX = "sess#";
     static final String CLIENT_PREFIX = "client#";
+    static final String AUTHZ_SESS_PREFIX = "authz-sess#";
     static final String REFRESH_INDEX = "refresh-index";
 
     private static final String A_ACCESS_TOKEN = "accessToken";
@@ -48,6 +50,8 @@ public class DynamoDbSessionStore implements SessionStore {
     private static final String A_ACCESS_EXP = "accessTokenExpiresAt";
     private static final String A_REFRESH_EXP = "refreshTokenExpiresAt";
     private static final String A_CREATED_AT = "createdAt";
+    private static final String A_AUTH_ID = "authorizationId";
+    private static final String A_AUDIENCE = "audience";
     private static final String A_CLIENT_NAME = "clientName";
     private static final String A_REDIRECT_URIS = "redirectUris";
     private static final String A_SCOPES = "scopes";
@@ -66,6 +70,15 @@ public class DynamoDbSessionStore implements SessionStore {
 
     @Override
     public Session createSession(Session session) {
+        if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
+            final Optional<String> previousSessionId = loadAuthzSessionPointer(session.authorizationId());
+            previousSessionId.ifPresent(prev -> {
+                if (!prev.equals(session.sessionId())) {
+                    deleteSession(prev);
+                }
+            });
+        }
+
         final Map<String, AttributeValue> item = new HashMap<>();
         item.put(PK, s(SESSION_PREFIX + session.sessionId()));
         item.put(TYPE, s("session"));
@@ -80,7 +93,8 @@ public class DynamoDbSessionStore implements SessionStore {
         putInstant(item, A_ACCESS_EXP, session.accessTokenExpiresAt());
         putInstant(item, A_REFRESH_EXP, session.refreshTokenExpiresAt());
         putInstant(item, A_CREATED_AT, session.createdAt());
-        // TTL: prefer refresh expiry (the outer session bound), else access expiry.
+        putIfPresent(item, A_AUTH_ID, session.authorizationId());
+        putIfPresent(item, A_AUDIENCE, session.audience());
         final Instant ttl = session.refreshTokenExpiresAt() != null
                 ? session.refreshTokenExpiresAt()
                 : session.accessTokenExpiresAt();
@@ -88,6 +102,18 @@ public class DynamoDbSessionStore implements SessionStore {
             item.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
         }
         client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
+
+        if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
+            final Map<String, AttributeValue> pointer = new HashMap<>();
+            pointer.put(PK, s(AUTHZ_SESS_PREFIX + session.authorizationId()));
+            pointer.put(TYPE, s("authz-session-pointer"));
+            pointer.put(A_SESSION_ID, s(session.sessionId()));
+            pointer.put(A_AUTH_ID, s(session.authorizationId()));
+            if (ttl != null) {
+                pointer.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
+            }
+            client.putItem(PutItemRequest.builder().tableName(tableName).item(pointer).build());
+        }
         return session;
     }
 
@@ -130,10 +156,30 @@ public class DynamoDbSessionStore implements SessionStore {
         if (sessionId == null) {
             return;
         }
+        final Optional<Session> existing = getSessionByAccessToken(sessionId);
         client.deleteItem(DeleteItemRequest.builder()
                 .tableName(tableName)
                 .key(Map.of(PK, s(SESSION_PREFIX + sessionId)))
                 .build());
+        existing.ifPresent(session -> {
+            if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
+                final Optional<String> pointed = loadAuthzSessionPointer(session.authorizationId());
+                if (pointed.isPresent() && sessionId.equals(pointed.get())) {
+                    client.deleteItem(DeleteItemRequest.builder()
+                            .tableName(tableName)
+                            .key(Map.of(PK, s(AUTHZ_SESS_PREFIX + session.authorizationId())))
+                            .build());
+                }
+            }
+        });
+    }
+
+    @Override
+    public void deleteSessionsByAuthorizationId(String authorizationId) {
+        if (authorizationId == null) {
+            return;
+        }
+        loadAuthzSessionPointer(authorizationId).ifPresent(this::deleteSession);
     }
 
     @Override
@@ -167,10 +213,24 @@ public class DynamoDbSessionStore implements SessionStore {
         if (!response.hasItem() || response.item().isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(toClient(response.item()));
+        final RegisteredClientRecord client = toClient(response.item());
+        if (client.expiresAt() != null && Instant.now().isAfter(client.expiresAt())) {
+            return Optional.empty();
+        }
+        return Optional.of(client);
     }
 
-    // ---- mapping helpers -------------------------------------------------
+    private Optional<String> loadAuthzSessionPointer(String authorizationId) {
+        final GetItemResponse response = client.getItem(GetItemRequest.builder()
+                .tableName(tableName)
+                .key(Map.of(PK, s(AUTHZ_SESS_PREFIX + authorizationId)))
+                .build());
+        if (!response.hasItem() || response.item().isEmpty()) {
+            return Optional.empty();
+        }
+        final String sessionId = str(response.item(), A_SESSION_ID);
+        return sessionId == null || sessionId.isBlank() ? Optional.empty() : Optional.of(sessionId);
+    }
 
     private Session toSession(Map<String, AttributeValue> item) {
         return new Session(
@@ -184,7 +244,9 @@ public class DynamoDbSessionStore implements SessionStore {
                 str(item, A_IDP_REFRESH),
                 instant(item, A_ACCESS_EXP),
                 instant(item, A_REFRESH_EXP),
-                instant(item, A_CREATED_AT)
+                instant(item, A_CREATED_AT),
+                str(item, A_AUTH_ID),
+                str(item, A_AUDIENCE)
         );
     }
 
