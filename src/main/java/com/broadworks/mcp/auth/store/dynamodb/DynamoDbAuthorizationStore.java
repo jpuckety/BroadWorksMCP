@@ -15,15 +15,12 @@ import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
@@ -34,7 +31,6 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
  * <ul>
  *   <li>{@code oauth#&lt;id&gt;} — serialized authorization payload + pointer list</li>
  *   <li>{@code oauthtok#&lt;type&gt;#&lt;value&gt;} — reverse pointer to authorization id</li>
- *   <li>{@code oauthconsent#&lt;clientId&gt;#&lt;principal&gt;} — serialized consent</li>
  * </ul>
  * Prefixes avoid collisions with {@code sess#} / {@code client#} / HTTP-session keys.</p>
  */
@@ -44,10 +40,8 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     static final String TYPE = "type";
     static final String OAUTH_PREFIX = "oauth#";
     static final String TOKEN_PREFIX = "oauthtok#";
-    static final String CONSENT_PREFIX = "oauthconsent#";
     static final String TYPE_AUTH = "oauth-authorization";
     static final String TYPE_TOKEN = "oauth-token-pointer";
-    static final String TYPE_CONSENT = "oauth-consent";
 
     private static final String A_AUTH_ID = "authorizationId";
     private static final String A_PAYLOAD = "payload";
@@ -161,50 +155,6 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         return findByPointer(pointerKey(tokenType.getValue(), token));
     }
 
-    @Override
-    public void saveConsent(OAuth2AuthorizationConsent consent) {
-        final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(consentPk(consent.getRegisteredClientId(), consent.getPrincipalName())));
-        item.put(TYPE, s(TYPE_CONSENT));
-        item.put(A_PAYLOAD, AttributeValue.builder()
-                .b(SdkBytes.fromByteArray(AuthorizationSerialization.serialize(consent)))
-                .build());
-        // One year default; consents are long-lived until revoked.
-        item.put(A_TTL, n(Long.toString(Instant.now().plusSeconds(31_536_000L).getEpochSecond())));
-        client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
-    }
-
-    @Override
-    public void removeConsent(OAuth2AuthorizationConsent consent) {
-        if (consent == null) {
-            return;
-        }
-        client.deleteItem(DeleteItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(consentPk(consent.getRegisteredClientId(), consent.getPrincipalName()))))
-                .build());
-    }
-
-    @Override
-    public Optional<OAuth2AuthorizationConsent> findConsent(String registeredClientId, String principalName) {
-        if (registeredClientId == null || principalName == null) {
-            return Optional.empty();
-        }
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(consentPk(registeredClientId, principalName))))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
-            return Optional.empty();
-        }
-        final AttributeValue payload = response.item().get(A_PAYLOAD);
-        if (payload == null || payload.b() == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(
-                AuthorizationSerialization.deserialize(payload.b().asByteArray(), OAuth2AuthorizationConsent.class));
-    }
-
     private Optional<OAuth2Authorization> findByPointer(String pointerPk) {
         final GetItemResponse response = client.getItem(GetItemRequest.builder()
                 .tableName(tableName)
@@ -285,10 +235,6 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         final String rest = pointer.substring(TOKEN_PREFIX.length());
         final int hash = rest.indexOf('#');
         return hash < 0 ? rest : rest.substring(0, hash);
-    }
-
-    private static String consentPk(String clientId, String principal) {
-        return CONSENT_PREFIX + clientId + "#" + principal;
     }
 
     private static Instant resolveTtl(OAuth2Authorization authorization) {

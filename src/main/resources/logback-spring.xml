@@ -37,6 +37,7 @@
         <logger name="io.modelcontextprotocol" level="${LOG_LEVEL_MCP:-INFO}"/>
         <logger name="org.springframework.security" level="${LOG_LEVEL_SECURITY:-INFO}"/>
         <logger name="software.amazon.awssdk.auth.credentials" level="INFO" />
+        <logger name="co.ecg.alpaca" level="${LOG_LEVEL_ALPACA:-DEBUG}"/>
 
         <root level="${LOG_LEVEL_ROOT:-INFO}">
             <appender-ref ref="CONSOLE"/>

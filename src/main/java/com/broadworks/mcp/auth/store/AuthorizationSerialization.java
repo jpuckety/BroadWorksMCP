@@ -11,8 +11,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * JDK serialization helpers for {@link org.springframework.security.oauth2.server.authorization.OAuth2Authorization}
- * and {@link org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent}
- * (both {@link java.io.Serializable}).
+ * ({@link java.io.Serializable}).
  *
  * <p>Same class of risk as HTTP session serialization: incompatible Security class changes on
  * redeploy may drop pending authorizations (user re-auths). Acceptable for short-lived codes.</p>

@@ -30,8 +30,8 @@ import software.amazon.awssdk.services.kms.KmsClient;
  *   <li>{@code IN_MEMORY} (default when unset): non-durable in-memory stores for local / test use.</li>
  * </ul>
  *
- * <p>SAS authorizations and consents share the sessions DynamoDB table (key prefixes avoid
- * collisions) so multi-instance authorize/token exchange works without ALB stickiness.</p>
+ * <p>SAS authorizations share the sessions DynamoDB table (key prefixes avoid collisions) so
+ * multi-instance authorize/token exchange works without ALB stickiness.</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class StorageConfig {

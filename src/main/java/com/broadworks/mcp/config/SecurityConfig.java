@@ -86,7 +86,7 @@ public class SecurityConfig {
                                 .oidcUserService(oidcUserService())))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(bearerChallengeEntryPoint))
-                // Bearer APIs are stateless; disable CSRF (login + consent are form/redirect based).
+                // Bearer APIs are stateless; disable CSRF (interactive Google login is redirect based).
                 .csrf(csrf -> csrf.disable());
         return http.build();
     }

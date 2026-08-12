@@ -3,7 +3,6 @@ package com.broadworks.mcp.auth.store.inmemory;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
-import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,7 +12,6 @@ import org.springframework.security.oauth2.core.OAuth2AccessToken;
 import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 
@@ -71,24 +69,5 @@ class InMemoryAuthorizationStoreTest {
                 .isPresent();
         assertThat(store.findAuthorizationByToken("state-1", new OAuth2TokenType("state")))
                 .isPresent();
-    }
-
-    @Test
-    void consentRoundTrip() {
-        final OAuth2AuthorizationConsent consent = OAuth2AuthorizationConsent
-                .withId("client-1", "user-sub")
-                .scope("openid")
-                .scope("email")
-                .build();
-
-        store.saveConsent(consent);
-
-        assertThat(store.findConsent("client-1", "user-sub")).isPresent()
-                .get()
-                .extracting(OAuth2AuthorizationConsent::getScopes)
-                .isEqualTo(Set.of("openid", "email"));
-
-        store.removeConsent(consent);
-        assertThat(store.findConsent("client-1", "user-sub")).isEmpty();
     }
 }

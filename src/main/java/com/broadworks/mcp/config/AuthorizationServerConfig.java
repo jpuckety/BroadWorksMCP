@@ -3,7 +3,6 @@ package com.broadworks.mcp.config;
 import java.util.function.Consumer;
 
 import com.broadworks.mcp.auth.session.OpaqueTokenFactory;
-import com.broadworks.mcp.auth.session.StoreBackedAuthorizationConsentService;
 import com.broadworks.mcp.auth.session.StoreBackedAuthorizationService;
 import com.broadworks.mcp.auth.session.StoreBackedRegisteredClientRepository;
 import com.broadworks.mcp.auth.store.AuthorizationStore;
@@ -20,7 +19,6 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationContext;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationCodeRequestAuthenticationException;
@@ -40,9 +38,8 @@ import org.springframework.util.StringUtils;
  *
  * <p>Uses SAS default endpoints ({@code /oauth2/authorize}, {@code /oauth2/token},
  * {@code /oauth2/jwks}, discovery at {@code /.well-known/oauth-authorization-server}). Authorizations
- * and consents are durable via {@link AuthorizationStore}; issued sessions via {@link SessionStore}.
- * Unauthenticated browser hits on the authorize endpoint redirect to Google login. Per-client consent
- * is required for DCR clients.</p>
+ * are durable via {@link AuthorizationStore}; issued sessions via {@link SessionStore}.
+ * Unauthenticated browser hits on the authorize endpoint redirect to Google login.</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerConfig {
@@ -68,7 +65,6 @@ public class AuthorizationServerConfig {
                 .with(authorizationServer, server -> server
                         .oidc(Customizer.withDefaults())
                         .authorizationEndpoint(endpoint -> endpoint
-                                .consentPage("/oauth2/consent")
                                 .authenticationProviders(providers ->
                                         configureResourceValidators(providers, canonicalResource)))
                         .authorizationServerMetadataEndpoint(metadata -> metadata
@@ -136,13 +132,6 @@ public class AuthorizationServerConfig {
                                                            SessionStore sessionStore,
                                                            PublicBaseUrlProperties publicBaseUrl) {
         return new StoreBackedAuthorizationService(authorizationStore, sessionStore, publicBaseUrl);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(OAuth2AuthorizationConsentService.class)
-    public OAuth2AuthorizationConsentService authorizationConsentService(
-            AuthorizationStore authorizationStore) {
-        return new StoreBackedAuthorizationConsentService(authorizationStore);
     }
 
     @Bean

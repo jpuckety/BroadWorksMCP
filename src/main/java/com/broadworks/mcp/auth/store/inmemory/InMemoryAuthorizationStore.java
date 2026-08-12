@@ -12,7 +12,6 @@ import org.springframework.security.oauth2.core.OAuth2RefreshToken;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsent;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 
 /**
@@ -26,7 +25,6 @@ public class InMemoryAuthorizationStore implements AuthorizationStore {
     private final ConcurrentMap<String, String> idByCode = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> idByState = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> idByIdToken = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, OAuth2AuthorizationConsent> consents = new ConcurrentHashMap<>();
 
     @Override
     public void saveAuthorization(OAuth2Authorization authorization) {
@@ -80,27 +78,6 @@ public class InMemoryAuthorizationStore implements AuthorizationStore {
             return resolve(idByIdToken.get(token));
         }
         return findByAnyToken(token);
-    }
-
-    @Override
-    public void saveConsent(OAuth2AuthorizationConsent consent) {
-        consents.put(consentKey(consent.getRegisteredClientId(), consent.getPrincipalName()), consent);
-    }
-
-    @Override
-    public void removeConsent(OAuth2AuthorizationConsent consent) {
-        if (consent == null) {
-            return;
-        }
-        consents.remove(consentKey(consent.getRegisteredClientId(), consent.getPrincipalName()));
-    }
-
-    @Override
-    public Optional<OAuth2AuthorizationConsent> findConsent(String registeredClientId, String principalName) {
-        if (registeredClientId == null || principalName == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(consents.get(consentKey(registeredClientId, principalName)));
     }
 
     private Optional<OAuth2Authorization> findByAnyToken(String token) {
@@ -162,9 +139,5 @@ public class InMemoryAuthorizationStore implements AuthorizationStore {
         if (idToken != null) {
             idByIdToken.remove(idToken.getToken().getTokenValue(), authorization.getId());
         }
-    }
-
-    private static String consentKey(String clientId, String principal) {
-        return clientId + "|" + principal;
     }
 }
