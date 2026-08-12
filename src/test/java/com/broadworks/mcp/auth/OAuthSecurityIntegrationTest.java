@@ -3,6 +3,7 @@ package com.broadworks.mcp.auth;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -82,7 +83,50 @@ class OAuthSecurityIntegrationTest {
         mockMvc.perform(post("/oauth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                // RFC 7591 section 3.2.2 error object, so the client can report why it failed.
+                .andExpect(jsonPath("$.error").value("invalid_redirect_uri"))
+                .andExpect(jsonPath("$.error_description", containsString("https://evil.example.com/cb")));
+    }
+
+    @Test
+    void dynamicClientRegistrationAcceptsWellKnownClientCallback() throws Exception {
+        final String body = """
+                {"redirect_uris":["https://claude.ai/api/mcp/auth_callback"],"client_name":"Claude"}""";
+
+        mockMvc.perform(post("/oauth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.client_id", notNullValue()));
+    }
+
+    @Test
+    void corsPreflightIsAnsweredForBrowserHostedClients() throws Exception {
+        mockMvc.perform(options("/mcp")
+                        .header(HttpHeaders.ORIGIN, "https://claude.ai")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "authorization,content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://claude.ai"));
+
+        // The token endpoint lives on the Authorization Server chain and needs the same handling.
+        mockMvc.perform(options("/oauth2/token")
+                        .header(HttpHeaders.ORIGIN, "https://claude.ai")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://claude.ai"));
+    }
+
+    @Test
+    void bearerChallengeIsReadableByBrowserClientsAndUnknownOriginsAreNotEchoed() throws Exception {
+        mockMvc.perform(get("/mcp").header(HttpHeaders.ORIGIN, "https://claude.ai"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS,
+                        containsString(HttpHeaders.WWW_AUTHENTICATE)));
+
+        mockMvc.perform(get("/mcp").header(HttpHeaders.ORIGIN, "https://evil.example.com"))
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
     }
 
     @Test

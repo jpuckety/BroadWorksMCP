@@ -2,8 +2,10 @@ package com.broadworks.mcp.config;
 
 import java.net.URI;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /**
  * Allow-list controlling which client redirect URIs may be registered / used.
@@ -18,16 +20,50 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * are allow-listed. Loopback HTTP ({@code http://127.0.0.1}, {@code http://localhost},
  * {@code [::1]}) is always allowed per OAuth 2.1 native-app guidance (RFC 8252).</p>
  *
- * @param allowedHttpsPrefixes list of allowed redirect-URI prefixes (HTTPS and custom schemes).
+ * <p>The callbacks of the well-known hosted MCP clients ({@link #WELL_KNOWN_CLIENT_REDIRECTS}) are
+ * additionally permitted by default so those clients can register out of the box; set
+ * {@code broadworks.auth.redirect.allow-well-known-clients=false} (env
+ * {@code OAUTH_ALLOW_WELL_KNOWN_CLIENTS}) to accept only the explicitly configured prefixes.</p>
+ *
+ * @param allowedHttpsPrefixes    list of allowed redirect-URI prefixes (HTTPS and custom schemes).
+ * @param allowWellKnownClients   whether {@link #WELL_KNOWN_CLIENT_REDIRECTS} are allowed in addition
+ *                                to {@code allowedHttpsPrefixes} (default {@code true}).
  */
 @ConfigurationProperties(prefix = "broadworks.auth.redirect")
 public record RedirectAllowlistProperties(
-        List<String> allowedHttpsPrefixes
+        List<String> allowedHttpsPrefixes,
+        Boolean allowWellKnownClients
 ) {
+
+    /**
+     * Redirect URIs of the widely used MCP clients. Each entry is a normal allow-list prefix, so the
+     * usual structural match applies (exact scheme/host/port, path at or below the entry path).
+     */
+    public static final List<String> WELL_KNOWN_CLIENT_REDIRECTS = List.of(
+            // Anthropic Claude (web / desktop connector callbacks).
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://claude.com/api/mcp/auth_callback",
+            // OpenAI ChatGPT connectors.
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            // xAI Grok connectors.
+            "https://grok.com/connectors-oauth-exchange-code",
+            // VS Code (and the Insiders build) relay the callback through vscode.dev.
+            "https://vscode.dev/redirect",
+            "https://insiders.vscode.dev/redirect"
+    );
+
+    // Two constructors, so the canonical one must be marked as the binding target explicitly.
+    @ConstructorBinding
     public RedirectAllowlistProperties {
         allowedHttpsPrefixes = allowedHttpsPrefixes == null
                 ? List.of()
                 : allowedHttpsPrefixes.stream().filter(p -> p != null && !p.isBlank()).toList();
+        allowWellKnownClients = allowWellKnownClients == null ? Boolean.TRUE : allowWellKnownClients;
+    }
+
+    /** Convenience constructor keeping the well-known client callbacks enabled (the default). */
+    public RedirectAllowlistProperties(List<String> allowedHttpsPrefixes) {
+        this(allowedHttpsPrefixes, Boolean.TRUE);
     }
 
     /**
@@ -58,7 +94,15 @@ public record RedirectAllowlistProperties(
                     || "::1".equals(host);
         }
         // HTTPS and custom schemes (e.g. cursor://) require an allow-list entry match.
-        return allowedHttpsPrefixes.stream().anyMatch(entry -> matches(entry, uri));
+        return effectiveAllowlist().stream().anyMatch(entry -> matches(entry, uri));
+    }
+
+    /** The configured prefixes plus, unless disabled, the well-known hosted MCP client callbacks. */
+    private List<String> effectiveAllowlist() {
+        if (!Boolean.TRUE.equals(allowWellKnownClients)) {
+            return allowedHttpsPrefixes;
+        }
+        return Stream.concat(allowedHttpsPrefixes.stream(), WELL_KNOWN_CLIENT_REDIRECTS.stream()).toList();
     }
 
     /**

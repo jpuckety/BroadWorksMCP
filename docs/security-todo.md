@@ -95,3 +95,15 @@ for the lifetime of the task. Add active eviction on `alpacaProperties.connectio
   10001 (and `chmod 1777 /tmp`) before the app container starts (`dependsOn` condition `SUCCESS`);
   both containers keep an immutable root filesystem. Any new writable mount must be added to that
   fix-up list too.
+- **WAF managed rule groups are scoped down on the OAuth endpoints (accepted trade-off).** Both
+  managed rule groups (`AWSManagedRulesCommonRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet`)
+  answered any request carrying a plain `http://` URL with a bare 403 before it reached the app,
+  which made RFC 8252 loopback redirect URIs — the ones local MCP clients use — unusable: DCR at
+  `/oauth/register`, `/oauth2/authorize` and `/oauth2/token` all failed. Those three paths are now
+  excluded from both rule groups via a `scopeDownStatement`; they stay rate limited (100 req / 5 min
+  / IP) and strictly validated by the app (exact redirect-URI allowlisting, mandatory PKCE S256,
+  public clients only), and every other path — notably `/mcp` — remains fully covered. The exact
+  firing rule could not be identified because the deploy IAM user lacks
+  `wafv2:ListWebACLs` / `wafv2:GetWebACL` and WAF logging was off. Logging now lands in the
+  `aws-waf-logs-broadworks-mcp` log group: revisit and replace the path exclusion with a narrow
+  `ruleActionOverrides` for the single offending rule once the logs name it.

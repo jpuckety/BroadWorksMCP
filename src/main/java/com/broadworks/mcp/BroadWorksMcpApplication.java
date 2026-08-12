@@ -3,6 +3,7 @@ package com.broadworks.mcp;
 import com.broadworks.mcp.config.AlpacaProperties;
 import com.broadworks.mcp.config.ApplicationIdProperties;
 import com.broadworks.mcp.config.AuthTokenProperties;
+import com.broadworks.mcp.config.CorsProperties;
 import com.broadworks.mcp.config.OidcProperties;
 import com.broadworks.mcp.config.PublicBaseUrlProperties;
 import com.broadworks.mcp.config.RedirectAllowlistProperties;
@@ -34,6 +35,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
         AlpacaProperties.class,
         PublicBaseUrlProperties.class,
         RedirectAllowlistProperties.class,
+        CorsProperties.class,
         ApplicationIdProperties.class
 })
 public class BroadWorksMcpApplication {

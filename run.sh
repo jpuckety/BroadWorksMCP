@@ -129,6 +129,29 @@ mvn_build() {
   ( cd "${PROJECT_ROOT}" && mvn -P "${ALPACA_PROFILE}" "$@" )
 }
 
+# Application environment variables loaded from .env that would otherwise leak into the test JVM and
+# override the values the tests set themselves. A developer .env with PUBLIC_HOSTNAME set, for
+# instance, changes the server's base URL and therefore the token audience, so tests asserting on the
+# localhost defaults fail. Test runs are executed with these unset.
+TEST_ISOLATED_VARS=(
+  PUBLIC_HOSTNAME OIDC_ISSUER_URI GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+  STORAGE_BACKEND SESSION_TABLE USER_CONFIG_TABLE KMS_KEY_ID APPLICATION_ID
+  OAUTH_REDIRECT_ALLOWLIST OAUTH_ALLOW_WELL_KNOWN_CLIENTS CORS_ALLOWED_ORIGINS CORS_ENABLED
+  ALPACA_LIVE ALPACA_LICENSE_KEY ALLOW_PRIVATE_NETWORK_TARGETS
+)
+
+# Same as mvn_build but with the application's runtime configuration removed from the environment
+# (see TEST_ISOLATED_VARS), so the test suite always sees the defaults it asserts on.
+mvn_test() {
+  require mvn
+  local unset_args=()
+  local var
+  for var in "${TEST_ISOLATED_VARS[@]}"; do
+    unset_args+=(-u "${var}")
+  done
+  ( cd "${PROJECT_ROOT}" && env "${unset_args[@]}" mvn -P "${ALPACA_PROFILE}" "$@" )
+}
+
 # Resolve the repackaged Spring Boot jar (fails clearly if the build hasn't run).
 resolve_jar() {
   local jar
@@ -153,12 +176,12 @@ cmd_build() {
 
 cmd_test() {
   log "Running the test suite..."
-  mvn_build test "$@"
+  mvn_test test "$@"
 }
 
 cmd_verify() {
   log "Building and verifying (clean verify, full test suite)..."
-  mvn_build clean verify "$@"
+  mvn_test clean verify "$@"
 }
 
 cmd_clean() {

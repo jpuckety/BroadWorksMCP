@@ -82,6 +82,28 @@ class RedirectAllowlistPropertiesTest {
     }
 
     @Test
+    void wellKnownClientCallbacksAreAllowedByDefault() {
+        final RedirectAllowlistProperties props = new RedirectAllowlistProperties(List.of());
+        assertThat(props.isAllowed("https://claude.ai/api/mcp/auth_callback")).isTrue();
+        assertThat(props.isAllowed("https://chatgpt.com/connector_platform_oauth_redirect")).isTrue();
+        assertThat(props.isAllowed("https://grok.com/connectors-oauth-exchange-code")).isTrue();
+        assertThat(props.isAllowed("https://vscode.dev/redirect")).isTrue();
+        // Still a structural match: neither a different path on the same host nor a look-alike host.
+        assertThat(props.isAllowed("https://claude.ai/other")).isFalse();
+        assertThat(props.isAllowed("https://claude.ai.attacker.tld/api/mcp/auth_callback")).isFalse();
+    }
+
+    @Test
+    void wellKnownClientCallbacksCanBeDisabled() {
+        final RedirectAllowlistProperties props =
+                new RedirectAllowlistProperties(List.of("https://app.example.com/cb"), false);
+        assertThat(props.isAllowed("https://claude.ai/api/mcp/auth_callback")).isFalse();
+        assertThat(props.isAllowed("https://app.example.com/cb")).isTrue();
+        // Loopback stays allowed: it is required by RFC 8252, not by the allow-list.
+        assertThat(props.isAllowed("http://127.0.0.1:8123/callback")).isTrue();
+    }
+
+    @Test
     void wildcardWebSchemeEntriesAndMalformedUrisAreRejected() {
         final RedirectAllowlistProperties wildcard =
                 new RedirectAllowlistProperties(List.of("https://", "https:"));

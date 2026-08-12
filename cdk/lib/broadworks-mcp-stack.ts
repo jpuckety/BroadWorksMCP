@@ -353,6 +353,45 @@ export class BroadWorksMcpStack extends cdk.Stack {
     }
 
     // ---- WAF (internet-facing ALB) ----------------------------------------
+    // The two AWS managed rule groups below reject any request that carries a plain `http://` URL
+    // with a bare 403 that never reaches the application (nothing is logged by the app). That is
+    // fatal for OAuth: RFC 8252 native clients (Claude Desktop, MCP Inspector, VS Code, Cursor)
+    // register and authorize with loopback callbacks such as `http://127.0.0.1:8123/callback` -
+    // exactly the redirect URIs the app always allows. Concretely, `POST /oauth/register` with a
+    // loopback `redirect_uris` entry, `GET /oauth2/authorize?...&redirect_uri=http%3A%2F%2F127.0.0.1...`
+    // and the matching `POST /oauth2/token` were all blocked, while the identical requests with an
+    // `https://` redirect URI reached the app. Dynamic Client Registration and the authorization-code
+    // flow were therefore impossible for every local MCP client.
+    //
+    // Both managed rule groups are consequently scoped down so they skip those three OAuth endpoints,
+    // whose legitimate payloads necessarily contain URLs. Everything else - notably `/mcp` - stays
+    // fully protected. The excluded endpoints keep the rate-based rules below and are strictly
+    // validated by the app itself (exact redirect-URI allowlisting, mandatory PKCE S256, public
+    // clients only). A narrower `ruleActionOverrides` on the single offending managed rule would be
+    // preferable, but the firing rule could not be identified (the WebACL is not readable with the
+    // current IAM permissions and WAF logging was not enabled); the logging configuration added
+    // further down makes the next block diagnosable so this can be tightened later.
+    const wafOauthExcludedPaths = ['/oauth/register', '/oauth2/authorize', '/oauth2/token'];
+    const notOauthEndpoints: wafv2.CfnWebACL.StatementProperty = {
+      notStatement: {
+        statement: {
+          orStatement: {
+            statements: wafOauthExcludedPaths.map((uriPathPrefix) => ({
+              byteMatchStatement: {
+                searchString: uriPathPrefix,
+                fieldToMatch: { uriPath: {} },
+                positionalConstraint: 'STARTS_WITH',
+                textTransformations: [
+                  { priority: 0, type: 'URL_DECODE' },
+                  { priority: 1, type: 'LOWERCASE' },
+                ],
+              },
+            })),
+          },
+        },
+      },
+    };
+
     const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
       name: 'broadworks-mcp-web-acl',
       scope: 'REGIONAL',
@@ -368,7 +407,11 @@ export class BroadWorksMcpStack extends cdk.Stack {
           priority: 0,
           overrideAction: { none: {} },
           statement: {
-            managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesCommonRuleSet' },
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesCommonRuleSet',
+              scopeDownStatement: notOauthEndpoints,
+            },
           },
           visibilityConfig: {
             cloudWatchMetricsEnabled: true,
@@ -384,6 +427,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
             managedRuleGroupStatement: {
               vendorName: 'AWS',
               name: 'AWSManagedRulesKnownBadInputsRuleSet',
+              scopeDownStatement: notOauthEndpoints,
             },
           },
           visibilityConfig: {
@@ -468,6 +512,43 @@ export class BroadWorksMcpStack extends cdk.Stack {
       resourceArn: service.loadBalancer.loadBalancerArn,
       webAclArn: webAcl.attrArn,
     });
+
+    // WAF blocks are invisible to the application (the 403 is served by WAF itself), which is why the
+    // loopback redirect-URI breakage above could only be found by probing the live endpoint and why
+    // the offending managed rule still cannot be named. Ship the WebACL logs to CloudWatch so a future
+    // block identifies its rule and the scope-down above can be replaced by a precise
+    // `ruleActionOverrides`. WAF requires the destination log group name to start with
+    // `aws-waf-logs-`. The customer-managed key is reused: the `AllowCloudWatchLogs` statement on
+    // `dataKey` already lets the CloudWatch Logs service encrypt log groups in this account/region,
+    // and WAF delivers through that service.
+    const wafLogGroupName = 'aws-waf-logs-broadworks-mcp';
+    const wafLogGroup = new logs.LogGroup(this, 'WafLogGroup', {
+      logGroupName: wafLogGroupName,
+      retention: logs.RetentionDays.ONE_MONTH,
+      encryptionKey: dataKey,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    const wafLoggingConfiguration = new wafv2.CfnLoggingConfiguration(this, 'WebAclLoggingConfiguration', {
+      resourceArn: webAcl.attrArn,
+      // WAF rejects the `:*` suffix that `logGroup.logGroupArn` carries, so the destination ARN is
+      // built explicitly from the (literal) log group name.
+      logDestinationConfigs: [
+        this.formatArn({
+          service: 'logs',
+          resource: 'log-group',
+          resourceName: wafLogGroupName,
+          arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
+        }),
+      ],
+      // Bearer tokens and session cookies must never land in the logs.
+      redactedFields: [
+        { singleHeader: { Name: 'authorization' } },
+        { singleHeader: { Name: 'cookie' } },
+      ],
+    });
+    // The destination ARN is a literal string, so CloudFormation cannot infer the ordering itself.
+    wafLoggingConfiguration.node.addDependency(wafLogGroup);
 
     // Actuator health probe for ALB target group.
     service.targetGroup.configureHealthCheck({

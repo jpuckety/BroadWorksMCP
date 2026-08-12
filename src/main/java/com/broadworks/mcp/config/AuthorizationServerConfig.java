@@ -32,6 +32,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 import org.springframework.util.StringUtils;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
  * Spring Authorization Server configuration.
@@ -54,7 +55,8 @@ public class AuthorizationServerConfig {
     @Order(Ordered.HIGHEST_PRECEDENCE)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http,
-                                                                      PublicBaseUrlProperties publicBaseUrl)
+                                                                      PublicBaseUrlProperties publicBaseUrl,
+                                                                      CorsConfigurationSource corsConfigurationSource)
             throws Exception {
         final OAuth2AuthorizationServerConfigurer authorizationServer =
                 new OAuth2AuthorizationServerConfigurer();
@@ -62,6 +64,9 @@ public class AuthorizationServerConfig {
         final String canonicalResource = publicBaseUrl.mcpResourceUrl();
         http
                 .securityMatcher(authorizationServer.getEndpointsMatcher())
+                // Browser-hosted clients exchange the authorization code from their own origin, so the
+                // token endpoint needs the same CORS handling (and preflight pass-through) as /mcp.
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .with(authorizationServer, server -> server
                         .oidc(Customizer.withDefaults())
                         .authorizationEndpoint(endpoint -> endpoint

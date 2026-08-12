@@ -9,6 +9,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.oauth2.client.CommonOAuth2Provider;
 import org.springframework.security.core.GrantedAuthority;
@@ -25,8 +26,12 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.server.resource.introspection.OpaqueTokenIntrospector;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -71,17 +76,30 @@ public class SecurityConfig {
             "/oauth/register"
     };
 
+    /**
+     * Endpoints a browser-hosted MCP client calls cross-origin: the transports, the discovery
+     * documents, Dynamic Client Registration and the Authorization Server endpoints (the token
+     * exchange in particular).
+     */
+    private static final List<String> CORS_PATHS = List.of(
+            "/mcp", "/mcp/**", "/sse", "/sse/**",
+            "/.well-known/**", "/oauth/register", "/oauth2/**");
+
     @Bean
     @Order(2)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     public SecurityFilterChain appSecurityFilterChain(HttpSecurity http,
                                                       OpaqueTokenIntrospector opaqueTokenIntrospector,
                                                       BearerChallengeEntryPoint bearerChallengeEntryPoint,
-                                                      PublicBaseUrlProperties publicBaseUrl)
+                                                      PublicBaseUrlProperties publicBaseUrl,
+                                                      CorsConfigurationSource corsConfigurationSource)
             throws Exception {
         final String baseUrl = publicBaseUrl.baseUrl();
         http
                 .securityMatcher("/**")
+                // Preflight requests carry no credentials, so CORS must be handled ahead of
+                // authorization; unlisted origins simply get no Access-Control-Allow-Origin.
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         .anyRequest().authenticated())
@@ -140,6 +158,31 @@ public class SecurityConfig {
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     public BearerChallengeEntryPoint bearerChallengeEntryPoint(PublicBaseUrlProperties publicBaseUrl) {
         return new BearerChallengeEntryPoint(publicBaseUrl);
+    }
+
+    /**
+     * CORS rules for the MCP + OAuth endpoints (see {@link CorsProperties}). Cookies are never
+     * allowed: MCP clients authenticate with a bearer token, and {@code WWW-Authenticate} is exposed
+     * so a browser client can read the {@code resource_metadata} URL from the 401 challenge.
+     */
+    @Bean
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    public CorsConfigurationSource corsConfigurationSource(CorsProperties corsProperties) {
+        final UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        if (!corsProperties.isEnabled()) {
+            return source;
+        }
+        final CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(corsProperties.effectiveAllowedOrigins());
+        configuration.setAllowedMethods(List.of("GET", "POST", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of(
+                HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE, HttpHeaders.ACCEPT,
+                "Mcp-Session-Id", "Mcp-Protocol-Version", "Last-Event-ID"));
+        configuration.setExposedHeaders(List.of(HttpHeaders.WWW_AUTHENTICATE, "Mcp-Session-Id"));
+        configuration.setAllowCredentials(false);
+        configuration.setMaxAge(1800L);
+        CORS_PATHS.forEach(path -> source.registerCorsConfiguration(path, configuration));
+        return source;
     }
 
     @Bean

@@ -138,6 +138,9 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
 | `APPLICATION_ID` | `broadworks-mcp` | Partition key for the per-user resource table. |
 | `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma-separated list of allowed redirect-URI prefixes for HTTPS **and** custom schemes (e.g. `https://app.example.com/,cursor://`). Loopback HTTP (`127.0.0.1` / `localhost`) is always allowed. |
+| `OAUTH_ALLOW_WELL_KNOWN_CLIENTS` | `true` | Also allow the callbacks of the well-known hosted MCP clients (`https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, `https://chatgpt.com/connector_platform_oauth_redirect`, `https://grok.com/connectors-oauth-exchange-code`, `https://vscode.dev/redirect`, `https://insiders.vscode.dev/redirect`) so they register without extra configuration. Set `false` to accept only `OAUTH_REDIRECT_ALLOWLIST`. |
+| `CORS_ENABLED` | `true` | Whether CORS (and therefore `OPTIONS` preflight) is handled on `/mcp`, `/.well-known/**`, `/oauth/register` and `/oauth2/**`. |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins allowed to call those endpoints from a browser. Empty → the well-known hosted client origins (`https://claude.ai`, `https://claude.com`, `https://chatgpt.com`, `https://grok.com`). Only listed origins are echoed, which doubles as the MCP spec's `Origin` (DNS-rebinding) check; cookies are never allowed and `WWW-Authenticate` is exposed so a browser client can read the challenge. |
 | `ACCESS_TOKEN_TTL` | `PT1H` | Opaque access-token lifetime (capped by IdP ID-token expiry). |
 | `REFRESH_TOKEN_TTL` | `P30D` | Refresh-token lifetime. |
 | `AUTH_CODE_TTL` | `PT5M` | One-time authorization-code lifetime. |
@@ -148,7 +151,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). In ECS, supplied from SSM `/broadworks-mcp/alpaca-license-key`. |
 | `LOG_LEVEL_ROOT` | `INFO` | Root log level (HTTP profile). |
 | `LOG_LEVEL_APP` | `DEBUG` | Level for the application package `com.broadworks.mcp`. |
-| `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP endpoint access log (`com.broadworks.mcp.web`). |
+| `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP **and** OAuth endpoint access logs (`com.broadworks.mcp.web`: `McpEndpointLoggingFilter`, `OAuthEndpointLoggingFilter`). |
 | `LOG_LEVEL_MCP` | `INFO` | Level for the Spring AI MCP + MCP SDK protocol internals (`org.springframework.ai.mcp`, `io.modelcontextprotocol`). Set to `DEBUG`/`TRACE` to see the raw protocol handshake. |
 | `LOG_LEVEL_SECURITY` | `INFO` | Level for `org.springframework.security` (raise to `DEBUG` to trace the OAuth/Resource-Server filter chain). |
 
@@ -158,8 +161,9 @@ All values are externalized; there are no secrets or magic numbers in code.
 
 ## Logging & troubleshooting
 
-The MCP endpoints (`/mcp` and the legacy `/sse`) are access-logged by `McpEndpointLoggingFilter` to
-make client interactions easy to follow:
+The MCP endpoints (`/mcp` and the legacy `/sse`) are access-logged by `McpEndpointLoggingFilter`, and
+the OAuth / discovery surface (`/.well-known/**`, `/oauth/register`, `/oauth2/**`, `/login/**`) by
+`OAuthEndpointLoggingFilter`, to make client interactions easy to follow:
 
 - Every MCP request is stamped with a short **correlation id** (and the client's `Mcp-Session-Id`
   when present) via the SLF4J MDC, so all log lines produced while handling one request share the
@@ -282,12 +286,22 @@ SecureString-backed secrets injected as container env.
 
    The internet-facing ALB is fronted by a WAFv2 WebACL (AWS managed common + known-bad-inputs rule
    groups, a general per-IP rate limit and tighter 100 req / 5 min limits on `/oauth/register` and
-   `/oauth2/token`). The tasks run non-root (uid 10001) with a read-only root filesystem; `/tmp` and
-   the JCS disk cache (`/app/.cache`) are ephemeral task volumes. Fargate creates those volumes
-   owned by `root:root` (the image's ownership is not inherited), so a short-lived root
-   `volume-init` container `chown`s them to uid 10001 and must exit successfully before the app
-   container starts — without it the JVM cannot create Tomcat's temp dir (`Unable to create
-   tempDir. java.io.tmpdir is set to /tmp`).
+   `/oauth2/token`). The two managed rule groups are deliberately **not** applied to
+   `/oauth/register`, `/oauth2/authorize` and `/oauth2/token`: their managed rules answer any request
+   containing a plain `http://` URL with a bare 403 (served by WAF, so the app never sees it), which
+   broke the RFC 8252 loopback redirect URIs (`http://127.0.0.1:<port>/…`, `http://localhost:<port>/…`)
+   that local MCP clients such as Claude Desktop, MCP Inspector, VS Code and Cursor use — Dynamic
+   Client Registration and the authorization-code flow were impossible for them. Those three
+   endpoints remain rate limited by the rules above and are strictly validated by the app itself
+   (exact redirect-URI allowlisting, mandatory PKCE S256, public clients only); every other path,
+   notably `/mcp`, stays fully covered by both rule groups. WAF logging is enabled and goes to the
+   `aws-waf-logs-broadworks-mcp` CloudWatch log group (`authorization` and `cookie` headers redacted),
+   so future blocks can be attributed to a concrete rule. The tasks run non-root (uid 10001) with a
+   read-only root filesystem; `/tmp` and the JCS disk cache (`/app/.cache`) are ephemeral task
+   volumes. Fargate creates those volumes owned by `root:root` (the image's ownership is not
+   inherited), so a short-lived root `volume-init` container `chown`s them to uid 10001 and must exit
+   successfully before the app container starts — without it the JVM cannot create Tomcat's temp dir
+   (`Unable to create tempDir. java.io.tmpdir is set to /tmp`).
 
 ---
 
