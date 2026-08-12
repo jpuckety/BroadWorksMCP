@@ -1,9 +1,23 @@
 package com.broadworks.mcp.auth.store.dynamodb;
 
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.AUTHORIZATION_ID;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.CLIENT_ID;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.CREATED_AT;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.EXPIRES_AT;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.PK;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.SESSION_ID;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.TYPE;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.instant;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putIfPresent;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putInstant;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putTtl;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.s;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.str;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.strList;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.stringList;
+
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -34,6 +48,11 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  * {@code authz-sess#<authorizationId>} (no extra GSI). A numeric {@code ttl} attribute enables
  * native DynamoDB expiry.</p>
  *
+ * <p>Item attribute names and value encodings come from {@link DynamoDbItems}, shared with the other
+ * stores, so a timestamp such as {@code createdAt} means the same thing and has the same ISO-8601
+ * format in every item of every table. The interactive HTTP login session lives in its own table
+ * (see {@link DynamoDbHttpSessionRepository}).</p>
+ *
  * <p><b>Bearer credentials are never stored verbatim.</b> Access and refresh tokens are reduced to
  * their SHA-256 digest before they are written or looked up, so a table read (or an export/backup)
  * yields nothing replayable; the {@link Session} values returned by this store therefore carry the
@@ -43,8 +62,6 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  */
 public class DynamoDbSessionStore implements SessionStore {
 
-    static final String PK = "pk";
-    static final String TYPE = "type";
     static final String SESSION_PREFIX = "sess#";
     static final String CLIENT_PREFIX = "client#";
     static final String AUTHZ_SESS_PREFIX = "authz-sess#";
@@ -53,24 +70,18 @@ public class DynamoDbSessionStore implements SessionStore {
     private static final String A_ACCESS_TOKEN = "accessTokenHash";
     /** GSI partition key attribute; holds the refresh-token digest, never the token itself. */
     private static final String A_REFRESH_TOKEN = "refreshToken";
-    private static final String A_SESSION_ID = "sessionId";
-    private static final String A_CLIENT_ID = "clientId";
     private static final String A_SUBJECT = "subject";
     private static final String A_EMAIL = "email";
     private static final String A_ID_TOKEN = "idToken";
     private static final String A_IDP_REFRESH = "idpRefreshToken";
     private static final String A_ACCESS_EXP = "accessTokenExpiresAt";
     private static final String A_REFRESH_EXP = "refreshTokenExpiresAt";
-    private static final String A_CREATED_AT = "createdAt";
-    private static final String A_AUTH_ID = "authorizationId";
     private static final String A_AUDIENCE = "audience";
     private static final String A_CLIENT_NAME = "clientName";
     private static final String A_REDIRECT_URIS = "redirectUris";
     private static final String A_SCOPES = "scopes";
     private static final String A_GRANT_TYPES = "grantTypes";
     private static final String A_AUTH_METHOD = "tokenEndpointAuthMethod";
-    private static final String A_EXPIRES_AT = "expiresAt";
-    private static final String A_TTL = "ttl";
 
     private final DynamoDbClient client;
     private final String tableName;
@@ -100,36 +111,32 @@ public class DynamoDbSessionStore implements SessionStore {
         final Map<String, AttributeValue> item = new HashMap<>();
         item.put(PK, s(SESSION_PREFIX + sessionIdHash));
         item.put(TYPE, s("session"));
-        item.put(A_SESSION_ID, s(sessionIdHash));
+        item.put(SESSION_ID, s(sessionIdHash));
         item.put(A_ACCESS_TOKEN, s(TokenHashing.sha256(session.accessToken())));
         putIfPresent(item, A_REFRESH_TOKEN, TokenHashing.sha256(session.refreshToken()));
-        putIfPresent(item, A_CLIENT_ID, session.clientId());
+        putIfPresent(item, CLIENT_ID, session.clientId());
         item.put(A_SUBJECT, s(session.subject()));
         putIfPresent(item, A_EMAIL, session.email());
         putIfPresent(item, A_ID_TOKEN, encrypt(session.subject(), session.idToken()));
         putIfPresent(item, A_IDP_REFRESH, encrypt(session.subject(), session.idpRefreshToken()));
         putInstant(item, A_ACCESS_EXP, session.accessTokenExpiresAt());
         putInstant(item, A_REFRESH_EXP, session.refreshTokenExpiresAt());
-        putInstant(item, A_CREATED_AT, session.createdAt());
-        putIfPresent(item, A_AUTH_ID, session.authorizationId());
+        putInstant(item, CREATED_AT, session.createdAt());
+        putIfPresent(item, AUTHORIZATION_ID, session.authorizationId());
         putIfPresent(item, A_AUDIENCE, session.audience());
         final Instant ttl = session.refreshTokenExpiresAt() != null
                 ? session.refreshTokenExpiresAt()
                 : session.accessTokenExpiresAt();
-        if (ttl != null) {
-            item.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
-        }
+        putTtl(item, ttl);
         client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
 
         if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
             final Map<String, AttributeValue> pointer = new HashMap<>();
             pointer.put(PK, s(AUTHZ_SESS_PREFIX + session.authorizationId()));
             pointer.put(TYPE, s("authz-session-pointer"));
-            pointer.put(A_SESSION_ID, s(sessionIdHash));
-            pointer.put(A_AUTH_ID, s(session.authorizationId()));
-            if (ttl != null) {
-                pointer.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
-            }
+            pointer.put(SESSION_ID, s(sessionIdHash));
+            pointer.put(AUTHORIZATION_ID, s(session.authorizationId()));
+            putTtl(pointer, ttl);
             client.putItem(PutItemRequest.builder().tableName(tableName).item(pointer).build());
         }
         return session;
@@ -192,7 +199,7 @@ public class DynamoDbSessionStore implements SessionStore {
                 .key(Map.of(PK, s(SESSION_PREFIX + sessionIdHash)))
                 .build());
         final String authorizationId = response.hasItem() && !response.item().isEmpty()
-                ? str(response.item(), A_AUTH_ID)
+                ? str(response.item(), AUTHORIZATION_ID)
                 : null;
         client.deleteItem(DeleteItemRequest.builder()
                 .tableName(tableName)
@@ -214,17 +221,15 @@ public class DynamoDbSessionStore implements SessionStore {
         final Map<String, AttributeValue> item = new HashMap<>();
         item.put(PK, s(CLIENT_PREFIX + clientRecord.clientId()));
         item.put(TYPE, s("client"));
-        item.put(A_CLIENT_ID, s(clientRecord.clientId()));
+        item.put(CLIENT_ID, s(clientRecord.clientId()));
         putIfPresent(item, A_CLIENT_NAME, clientRecord.clientName());
         item.put(A_REDIRECT_URIS, stringList(clientRecord.redirectUris()));
         item.put(A_SCOPES, stringList(clientRecord.scopes()));
         item.put(A_GRANT_TYPES, stringList(clientRecord.grantTypes()));
         putIfPresent(item, A_AUTH_METHOD, clientRecord.tokenEndpointAuthMethod());
-        putInstant(item, A_CREATED_AT, clientRecord.createdAt());
-        putInstant(item, A_EXPIRES_AT, clientRecord.expiresAt());
-        if (clientRecord.expiresAt() != null) {
-            item.put(A_TTL, n(Long.toString(clientRecord.expiresAt().getEpochSecond())));
-        }
+        putInstant(item, CREATED_AT, clientRecord.createdAt());
+        putInstant(item, EXPIRES_AT, clientRecord.expiresAt());
+        putTtl(item, clientRecord.expiresAt());
         client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
     }
 
@@ -255,39 +260,39 @@ public class DynamoDbSessionStore implements SessionStore {
         if (!response.hasItem() || response.item().isEmpty()) {
             return Optional.empty();
         }
-        final String sessionId = str(response.item(), A_SESSION_ID);
+        final String sessionId = str(response.item(), SESSION_ID);
         return sessionId == null || sessionId.isBlank() ? Optional.empty() : Optional.of(sessionId);
     }
 
     private Session toSession(Map<String, AttributeValue> item) {
         final String subject = str(item, A_SUBJECT);
         return new Session(
-                str(item, A_SESSION_ID),
+                str(item, SESSION_ID),
                 str(item, A_ACCESS_TOKEN),
                 str(item, A_REFRESH_TOKEN),
-                str(item, A_CLIENT_ID),
+                str(item, CLIENT_ID),
                 subject,
                 str(item, A_EMAIL),
                 decrypt(subject, str(item, A_ID_TOKEN)),
                 decrypt(subject, str(item, A_IDP_REFRESH)),
                 instant(item, A_ACCESS_EXP),
                 instant(item, A_REFRESH_EXP),
-                instant(item, A_CREATED_AT),
-                str(item, A_AUTH_ID),
+                instant(item, CREATED_AT),
+                str(item, AUTHORIZATION_ID),
                 str(item, A_AUDIENCE)
         );
     }
 
     private RegisteredClientRecord toClient(Map<String, AttributeValue> item) {
         return new RegisteredClientRecord(
-                str(item, A_CLIENT_ID),
+                str(item, CLIENT_ID),
                 str(item, A_CLIENT_NAME),
                 strList(item, A_REDIRECT_URIS),
                 strList(item, A_SCOPES),
                 strList(item, A_GRANT_TYPES),
                 str(item, A_AUTH_METHOD),
-                instant(item, A_CREATED_AT),
-                instant(item, A_EXPIRES_AT)
+                instant(item, CREATED_AT),
+                instant(item, EXPIRES_AT)
         );
     }
 
@@ -299,51 +304,5 @@ public class DynamoDbSessionStore implements SessionStore {
     private String decrypt(String subject, String value) {
         return value == null ? null
                 : encryptionService.decrypt(value, EncryptionContext.forSession(applicationId, subject));
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
-    }
-
-    private static AttributeValue n(String value) {
-        return AttributeValue.builder().n(value).build();
-    }
-
-    private static AttributeValue stringList(List<String> values) {
-        final List<AttributeValue> list = new ArrayList<>();
-        for (String value : values) {
-            list.add(s(value));
-        }
-        return AttributeValue.builder().l(list).build();
-    }
-
-    private static void putIfPresent(Map<String, AttributeValue> item, String key, String value) {
-        if (value != null) {
-            item.put(key, s(value));
-        }
-    }
-
-    private static void putInstant(Map<String, AttributeValue> item, String key, Instant value) {
-        if (value != null) {
-            item.put(key, s(value.toString()));
-        }
-    }
-
-    private static String str(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        return value == null ? null : value.s();
-    }
-
-    private static Instant instant(Map<String, AttributeValue> item, String key) {
-        final String raw = str(item, key);
-        return raw == null ? null : Instant.parse(raw);
-    }
-
-    private static List<String> strList(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        if (value == null || value.l() == null) {
-            return List.of();
-        }
-        return value.l().stream().map(AttributeValue::s).toList();
     }
 }

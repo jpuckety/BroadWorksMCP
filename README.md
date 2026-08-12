@@ -132,7 +132,8 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth client id. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client secret. |
 | `STORAGE_BACKEND` | `DYNAMODB` | `DYNAMODB` (durable) or `IN_MEMORY` (local/tests). |
-| `SESSION_TABLE` | `broadworks-mcp-sessions` | DynamoDB sessions/clients table. |
+| `SESSION_TABLE` | `broadworks-mcp-sessions` | DynamoDB table for issued opaque-token sessions, registered clients and SAS authorizations. |
+| `HTTP_SESSION_TABLE` | `broadworks-mcp-http-sessions` | DynamoDB table for the interactive Google-login HTTP sessions (own lifecycle and id space, hence its own table). |
 | `USER_CONFIG_TABLE` | `broadworks-mcp-user-config` | DynamoDB per-user resource table. |
 | `KMS_KEY_ID` | *(empty)* | Customer-managed KMS key id/ARN for secret encryption (required for `DYNAMODB`). |
 | `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
@@ -213,8 +214,16 @@ the MCP protocol).
    (never email).
 
 **Multi-instance:** With `STORAGE_BACKEND=DYNAMODB` and ECS `desiredCount ≥ 2` (no ALB stickiness),
-HTTP login sessions, SAS authorizations/consents, and issued opaque-token sessions are all shared
-via DynamoDB, so authorize on task A and token exchange / refresh on task B succeeds.
+HTTP login sessions (own table), SAS authorizations/consents, and issued opaque-token sessions are
+all shared via DynamoDB, so authorize on task A and token exchange / refresh on task B succeeds.
+
+The interactive login session lives in `HTTP_SESSION_TABLE`, separate from `SESSION_TABLE`: it has a
+different lifecycle (minutes, rotated on login) and id space (servlet session ids), and keeping the
+two apart stops their schemas from drifting (they previously disagreed on how a creation timestamp is
+named and encoded). Every item in both tables now uses `createdAt` / `lastAccessedAt` / `expiresAt`
+as ISO-8601 strings; only the native `ttl` attribute is numeric. Deploying the split does **not**
+migrate anything: login sessions written by an earlier version are ignored (browsers mid-login simply
+sign in again) and expire from the old table via its own TTL.
 
 Registering a public client:
 
@@ -243,8 +252,9 @@ Each tool resolves the caller's BroadWorks connection from the resource store (b
 
 ## Deployment (AWS CDK)
 
-The `cdk/` app provisions ECS Fargate behind an HTTPS ALB, the two DynamoDB tables (sessions with the
-`refresh-index` GSI + user-config) encrypted by a customer-managed KMS key, a Fargate **task IAM
+The `cdk/` app provisions ECS Fargate behind an HTTPS ALB, the three DynamoDB tables (sessions with
+the `refresh-index` GSI + http-sessions + user-config) encrypted by a customer-managed KMS key, a
+Fargate **task IAM
 role** granting scoped KMS + DynamoDB access (the blueprint's "IRSA" role), CloudWatch logs, and SSM
 SecureString-backed secrets injected as container env.
 

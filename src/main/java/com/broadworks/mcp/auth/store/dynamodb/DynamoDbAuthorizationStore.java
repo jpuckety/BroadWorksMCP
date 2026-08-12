@@ -1,5 +1,13 @@
 package com.broadworks.mcp.auth.store.dynamodb;
 
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.AUTHORIZATION_ID;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.PK;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.TYPE;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putTtl;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.s;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.str;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.stringList;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -35,7 +43,10 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
  *   <li>{@code oauth#&lt;id&gt;} — encrypted serialized authorization payload + pointer list</li>
  *   <li>{@code oauthtok#&lt;type&gt;#&lt;sha256(value)&gt;} — reverse pointer to authorization id</li>
  * </ul>
- * Prefixes avoid collisions with {@code sess#} / {@code client#} / HTTP-session keys.</p>
+ * Prefixes avoid collisions with the {@code sess#} / {@code client#} keys of
+ * {@link DynamoDbSessionStore}. (The interactive HTTP login session has its own table, see
+ * {@link DynamoDbHttpSessionRepository}.) Attribute names and value encodings come from
+ * {@link DynamoDbItems}, shared with the other stores.</p>
  *
  * <p>Token values are hashed before they become part of a key so no replayable credential is ever
  * written, and the payload (which holds the tokens themselves plus the authenticated principal) is
@@ -43,17 +54,13 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
  */
 public class DynamoDbAuthorizationStore implements AuthorizationStore {
 
-    static final String PK = "pk";
-    static final String TYPE = "type";
     static final String OAUTH_PREFIX = "oauth#";
     static final String TOKEN_PREFIX = "oauthtok#";
     static final String TYPE_AUTH = "oauth-authorization";
     static final String TYPE_TOKEN = "oauth-token-pointer";
 
-    private static final String A_AUTH_ID = "authorizationId";
     private static final String A_PAYLOAD = "payload";
     private static final String A_TOKEN_TYPE = "tokenType";
-    private static final String A_TTL = "ttl";
     private static final String A_POINTERS = "tokenPointers";
 
     private final DynamoDbClient client;
@@ -87,16 +94,14 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         final Map<String, AttributeValue> authItem = new HashMap<>();
         authItem.put(PK, s(OAUTH_PREFIX + authorization.getId()));
         authItem.put(TYPE, s(TYPE_AUTH));
-        authItem.put(A_AUTH_ID, s(authorization.getId()));
+        authItem.put(AUTHORIZATION_ID, s(authorization.getId()));
         authItem.put(A_PAYLOAD, AttributeValue.builder()
                 .b(SdkBytes.fromByteArray(encryptionService.encryptBytes(
                         AuthorizationSerialization.serialize(authorization),
                         context(authorization.getId()))))
                 .build());
         authItem.put(A_POINTERS, stringList(newPointers));
-        if (ttl != null) {
-            authItem.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
-        }
+        putTtl(authItem, ttl);
         items.add(TransactWriteItem.builder()
                 .put(p -> p.tableName(tableName).item(authItem))
                 .build());
@@ -105,11 +110,9 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
             final Map<String, AttributeValue> pointerItem = new HashMap<>();
             pointerItem.put(PK, s(pointer));
             pointerItem.put(TYPE, s(TYPE_TOKEN));
-            pointerItem.put(A_AUTH_ID, s(authorization.getId()));
+            pointerItem.put(AUTHORIZATION_ID, s(authorization.getId()));
             pointerItem.put(A_TOKEN_TYPE, s(tokenTypeFromPointer(pointer)));
-            if (ttl != null) {
-                pointerItem.put(A_TTL, n(Long.toString(ttl.getEpochSecond())));
-            }
+            putTtl(pointerItem, ttl);
             items.add(TransactWriteItem.builder()
                     .put(p -> p.tableName(tableName).item(pointerItem))
                     .build());
@@ -177,7 +180,7 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         if (!response.hasItem() || response.item().isEmpty()) {
             return Optional.empty();
         }
-        final AttributeValue authId = response.item().get(A_AUTH_ID);
+        final AttributeValue authId = response.item().get(AUTHORIZATION_ID);
         if (authId == null || authId.s() == null) {
             return Optional.empty();
         }
@@ -196,7 +199,7 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         if (payload == null || payload.b() == null) {
             return Optional.empty();
         }
-        final String authorizationId = str(response.item(), A_AUTH_ID);
+        final String authorizationId = str(response.item(), AUTHORIZATION_ID);
         final byte[] plaintext = encryptionService.decryptBytes(payload.b().asByteArray(), context(authorizationId));
         return Optional.ofNullable(
                 AuthorizationSerialization.deserialize(plaintext, OAuth2Authorization.class));
@@ -290,26 +293,5 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
             final List<TransactWriteItem> batch = items.subList(i, Math.min(i + batchSize, items.size()));
             client.transactWriteItems(TransactWriteItemsRequest.builder().transactItems(batch).build());
         }
-    }
-
-    private static String str(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        return value == null ? null : value.s();
-    }
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
-    }
-
-    private static AttributeValue n(String value) {
-        return AttributeValue.builder().n(value).build();
-    }
-
-    private static AttributeValue stringList(List<String> values) {
-        final List<AttributeValue> list = new ArrayList<>();
-        for (String value : values) {
-            list.add(s(value));
-        }
-        return AttributeValue.builder().l(list).build();
     }
 }

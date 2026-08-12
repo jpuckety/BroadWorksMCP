@@ -1,5 +1,15 @@
 package com.broadworks.mcp.auth.store.dynamodb;
 
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.CREATED_AT;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.LAST_ACCESSED_AT;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.PK;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.TYPE;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.instant;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.n;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putInstant;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.putTtl;
+import static com.broadworks.mcp.auth.store.dynamodb.DynamoDbItems.s;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -28,35 +38,34 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 /**
  * DynamoDB-backed Spring Session {@link SessionRepository} for the interactive HTTP login session.
  *
- * <p>Reuses the single sessions table (same {@code pk} partition key and {@code ttl} attribute as
- * {@link DynamoDbSessionStore}), keying HTTP sessions with a {@code httpsess#<id>} prefix so they
- * coexist with the {@code sess#} / {@code client#} items. Because the session lives in DynamoDB
- * rather than a single task's memory, any load-balanced instance can serve any request in the
- * Google sign-in / authorization-code handshake, which removes the need for ALB session
- * stickiness and lets the login session survive task restarts and redeploys.</p>
+ * <p>Uses its own table (see {@code broadworks.storage.http-session-table}) rather than sharing the
+ * sessions table with {@link DynamoDbSessionStore} / {@link DynamoDbAuthorizationStore}: the
+ * container-managed login session has a different lifecycle (minutes, rotated on login), a different
+ * shape (an opaque serialized attribute map) and a different id space (the servlet session id) from
+ * the issued opaque-token sessions and registered clients, so the item id needs no prefix and the
+ * two schemas cannot drift into each other. Because the session lives in DynamoDB rather than a
+ * single task's memory, any load-balanced instance can serve any request in the Google sign-in /
+ * authorization-code handshake, which removes the need for ALB session stickiness and lets the login
+ * session survive task restarts and redeploys.</p>
  *
- * <p>Session metadata (creation / last-accessed / max-inactive) is stored as plain numeric
- * attributes; the session attribute map (which carries the Spring Security {@code SecurityContext},
- * the transient OAuth2 authorization request, and the saved request) is JDK-serialized into a
- * single binary attribute. On load a fresh {@link MapSession} is reconstructed for the id (so its
- * id generator is initialised and {@link MapSession#changeSessionId()} used by session-fixation
- * protection works). A blob that cannot be deserialized (e.g. after an incompatible class change)
+ * <p>Timestamps use the same attribute names and ISO-8601 format as every other item this
+ * application writes ({@link DynamoDbItems#CREATED_AT} / {@link DynamoDbItems#LAST_ACCESSED_AT});
+ * only {@code ttl} is numeric, as DynamoDB's native expiry requires. The session attribute map
+ * (which carries the Spring Security {@code SecurityContext}, the transient OAuth2 authorization
+ * request, and the saved request) is JDK-serialized into a single binary attribute. On load a fresh
+ * {@link MapSession} is reconstructed for the id (so its id generator is initialised and
+ * {@link MapSession#changeSessionId()} used by session-fixation protection works). An item that
+ * cannot be read back (e.g. an incompatible class change, or the pre-split epoch-millis attributes)
  * is treated as an absent session so the user simply re-authenticates.</p>
  */
 public class DynamoDbHttpSessionRepository implements SessionRepository<MapSession> {
 
     private static final Logger log = LoggerFactory.getLogger(DynamoDbHttpSessionRepository.class);
 
-    static final String PK = "pk";
-    static final String TYPE = "type";
-    static final String HTTP_SESSION_PREFIX = "httpsess#";
     static final String TYPE_VALUE = "http-session";
 
-    private static final String A_CREATION_TIME = "creationTime";
-    private static final String A_LAST_ACCESSED = "lastAccessedTime";
     private static final String A_MAX_INACTIVE = "maxInactiveSeconds";
     private static final String A_ATTRIBUTES = "attributes";
-    private static final String A_TTL = "ttl";
 
     private final DynamoDbClient client;
     private final String tableName;
@@ -85,10 +94,10 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         }
 
         final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(HTTP_SESSION_PREFIX + session.getId()));
+        item.put(PK, s(session.getId()));
         item.put(TYPE, s(TYPE_VALUE));
-        item.put(A_CREATION_TIME, n(session.getCreationTime().toEpochMilli()));
-        item.put(A_LAST_ACCESSED, n(session.getLastAccessedTime().toEpochMilli()));
+        putInstant(item, CREATED_AT, session.getCreationTime());
+        putInstant(item, LAST_ACCESSED_AT, session.getLastAccessedTime());
         final long maxInactiveSeconds = session.getMaxInactiveInterval().getSeconds();
         item.put(A_MAX_INACTIVE, n(maxInactiveSeconds));
 
@@ -102,8 +111,7 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
 
         // Native DynamoDB TTL cleanup: expire at last-access + inactivity window (skip when infinite).
         if (maxInactiveSeconds > 0) {
-            final long ttl = session.getLastAccessedTime().plusSeconds(maxInactiveSeconds).getEpochSecond();
-            item.put(A_TTL, n(ttl));
+            putTtl(item, session.getLastAccessedTime().plusSeconds(maxInactiveSeconds));
         }
 
         client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
@@ -116,7 +124,7 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         }
         final GetItemResponse response = client.getItem(GetItemRequest.builder()
                 .tableName(tableName)
-                .key(Map.of(PK, s(HTTP_SESSION_PREFIX + id)))
+                .key(Map.of(PK, s(id)))
                 .build());
         if (!response.hasItem() || response.item().isEmpty()) {
             return null;
@@ -124,8 +132,18 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         final Map<String, AttributeValue> item = response.item();
 
         final MapSession session = new MapSession(id);
-        session.setCreationTime(Instant.ofEpochMilli(readLong(item, A_CREATION_TIME, session.getCreationTime().toEpochMilli())));
-        session.setLastAccessedTime(Instant.ofEpochMilli(readLong(item, A_LAST_ACCESSED, session.getLastAccessedTime().toEpochMilli())));
+        final Instant createdAt = instant(item, CREATED_AT);
+        final Instant lastAccessedAt = instant(item, LAST_ACCESSED_AT);
+        if (createdAt == null || lastAccessedAt == null) {
+            // Unusable metadata (e.g. an item written before the attributes were unified): drop it
+            // and force re-login rather than resurrecting a session with invented timestamps.
+            log.warn("Discarding HTTP session {} without readable {}/{} attributes",
+                    id, CREATED_AT, LAST_ACCESSED_AT);
+            deleteById(id);
+            return null;
+        }
+        session.setCreationTime(createdAt);
+        session.setLastAccessedTime(lastAccessedAt);
         session.setMaxInactiveInterval(Duration.ofSeconds(
                 readLong(item, A_MAX_INACTIVE, MapSession.DEFAULT_MAX_INACTIVE_INTERVAL_SECONDS)));
 
@@ -154,7 +172,7 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         }
         client.deleteItem(DeleteItemRequest.builder()
                 .tableName(tableName)
-                .key(Map.of(PK, s(HTTP_SESSION_PREFIX + id)))
+                .key(Map.of(PK, s(id)))
                 .build());
     }
 
@@ -184,14 +202,6 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
     }
 
     // ---- attribute helpers ----------------------------------------------
-
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
-    }
-
-    private static AttributeValue n(long value) {
-        return AttributeValue.builder().n(Long.toString(value)).build();
-    }
 
     private static long readLong(Map<String, AttributeValue> item, String key, long defaultValue) {
         final AttributeValue value = item.get(key);

@@ -26,7 +26,9 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
  *   <li>{@code broadworks.storage.backend=DYNAMODB}: a {@link DynamoDbHttpSessionRepository} shares
  *       the session across all load-balanced ECS tasks and persists it through restarts, so the
  *       sign-in / authorization-code handshake no longer depends on ALB cookie stickiness (which
- *       native MCP clients do not honor and which is lost on redeploy).</li>
+ *       native MCP clients do not honor and which is lost on redeploy). It uses its own table
+ *       ({@code broadworks.storage.http-session-table}), separate from the OAuth session /
+ *       authorization table.</li>
  *   <li>{@code IN_MEMORY} (default, local / stdio / tests): a plain in-memory
  *       {@link MapSessionRepository}, matching the previous non-durable behaviour.</li>
  * </ul>
@@ -46,7 +48,8 @@ public class HttpSessionConfig {
     @ConditionalOnProperty(prefix = "broadworks.storage", name = "backend", havingValue = "DYNAMODB")
     public SessionRepository<MapSession> dynamoDbHttpSessionRepository(DynamoDbClient client,
                                                                        StorageProperties properties) {
-        return new DynamoDbHttpSessionRepository(client, properties.sessionTable(), DEFAULT_MAX_INACTIVE_INTERVAL);
+        return new DynamoDbHttpSessionRepository(client, properties.httpSessionTable(),
+                DEFAULT_MAX_INACTIVE_INTERVAL);
     }
 
     @Bean

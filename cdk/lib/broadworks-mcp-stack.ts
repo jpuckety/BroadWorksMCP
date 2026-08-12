@@ -148,6 +148,20 @@ export class BroadWorksMcpStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // Interactive Google-login HTTP sessions (Spring Session). Deliberately a separate table from
+    // the OAuth sessions/clients/authorizations above: different lifecycle (minutes, rotated on
+    // login), different id space (servlet session ids) and an opaque serialized attribute blob, so
+    // the two schemas cannot drift into each other. No GSI is needed - lookups are by session id.
+    const httpSessionsTable = new dynamodb.Table(this, 'HttpSessionsTable', {
+      partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
+      encryptionKey: dataKey,
+      timeToLiveAttribute: 'ttl',
+      pointInTimeRecovery: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     const userConfigTable = new dynamodb.Table(this, 'UserConfigTable', {
       partitionKey: { name: 'applicationId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
@@ -282,6 +296,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
         environment: {
           STORAGE_BACKEND: 'DYNAMODB',
           SESSION_TABLE: sessionsTable.tableName,
+          HTTP_SESSION_TABLE: httpSessionsTable.tableName,
           USER_CONFIG_TABLE: userConfigTable.tableName,
           APPLICATION_ID: applicationId,
           KMS_KEY_ID: dataKey.keyId,
@@ -559,7 +574,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     // No ALB session stickiness is required. Multi-instance OAuth is durable in DynamoDB:
     // - Interactive Google sign-in HTTP sessions (SecurityContext / saved request) via Spring Session
-    //   (HttpSessionConfig / DynamoDbHttpSessionRepository).
+    //   (HttpSessionConfig / DynamoDbHttpSessionRepository) in the dedicated http-sessions table.
     // - SAS authorizations (auth codes, refresh grants) and consents via DynamoDbAuthorizationStore
     //   in the same sessions table (oauth# / oauthtok# / oauthconsent# prefixes).
     // - Issued opaque access-token sessions via DynamoDbSessionStore (including token rotation).
@@ -591,6 +606,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     // ---- Grants (least privilege) -----------------------------------------
     sessionsTable.grantReadWriteData(taskRole);
+    httpSessionsTable.grantReadWriteData(taskRole);
     userConfigTable.grantReadWriteData(taskRole);
     dataKey.grantEncryptDecrypt(taskRole);
 
@@ -610,6 +626,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
       description: 'Fixed Elastic IP for the NAT gateway (stable outbound public IP of the ECS tasks)',
     });
     new cdk.CfnOutput(this, 'SessionsTableName', { value: sessionsTable.tableName });
+    new cdk.CfnOutput(this, 'HttpSessionsTableName', { value: httpSessionsTable.tableName });
     new cdk.CfnOutput(this, 'UserConfigTableName', { value: userConfigTable.tableName });
     new cdk.CfnOutput(this, 'KmsKeyId', { value: dataKey.keyId });
 

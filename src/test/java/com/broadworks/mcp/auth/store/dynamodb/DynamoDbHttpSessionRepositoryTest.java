@@ -28,12 +28,14 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
  * Unit tests for {@link DynamoDbHttpSessionRepository} using an in-memory fake {@link DynamoDbClient}
  * (only the three item operations the repository uses are implemented). Verifies that the interactive
  * login session — including a serialized Spring Security {@code SecurityContext} — round-trips, that
- * session-id rotation removes the old item, that expired sessions are evicted, and that an unreadable
- * attribute blob is treated as an absent session.
+ * session-id rotation removes the old item, that expired sessions are evicted, that an unreadable
+ * attribute blob is treated as an absent session, and that the persisted metadata uses the shared
+ * {@code createdAt} / {@code lastAccessedAt} ISO-8601 attributes rather than the old
+ * {@code creationTime} / {@code lastAccessedTime} epoch-millis pair.
  */
 class DynamoDbHttpSessionRepositoryTest {
 
-    private static final String TABLE = "sessions";
+    private static final String TABLE = "http-sessions";
     private static final String SECURITY_CONTEXT_ATTR = "SPRING_SECURITY_CONTEXT";
 
     private final FakeDynamoDbClient dynamo = new FakeDynamoDbClient();
@@ -57,6 +59,37 @@ class DynamoDbHttpSessionRepositoryTest {
         final SecurityContext reloaded = loaded.getAttribute(SECURITY_CONTEXT_ATTR);
         assertThat(reloaded).isNotNull();
         assertThat(reloaded.getAuthentication().getPrincipal()).isEqualTo("sub-123");
+    }
+
+    @Test
+    void persistsTimestampsUnderTheSharedAttributeNamesAsIso8601() {
+        final MapSession session = repository.createSession();
+        repository.save(session);
+
+        // The item id is the plain session id: the dedicated table needs no key prefix.
+        final Map<String, AttributeValue> item = dynamo.items.get(session.getId());
+        assertThat(item).isNotNull();
+        assertThat(item.get("createdAt").s()).isEqualTo(session.getCreationTime().toString());
+        assertThat(item.get("lastAccessedAt").s()).isEqualTo(session.getLastAccessedTime().toString());
+        // The legacy names/format must be gone, otherwise the same concept has two spellings again.
+        assertThat(item).doesNotContainKeys("creationTime", "lastAccessedTime");
+        // Only the native expiry attribute stays numeric (epoch seconds), as DynamoDB requires.
+        assertThat(item.get("ttl").n()).isNotNull();
+    }
+
+    @Test
+    void itemWithoutReadableTimestampsIsTreatedAsAbsentSession() {
+        // A pre-split item: epoch-millis creationTime/lastAccessedTime and no createdAt/lastAccessedAt.
+        final Map<String, AttributeValue> legacy = new HashMap<>();
+        legacy.put("pk", AttributeValue.builder().s("legacy-id").build());
+        legacy.put("creationTime", AttributeValue.builder()
+                .n(Long.toString(Instant.now().toEpochMilli())).build());
+        legacy.put("lastAccessedTime", AttributeValue.builder()
+                .n(Long.toString(Instant.now().toEpochMilli())).build());
+        dynamo.items.put("legacy-id", legacy);
+
+        assertThat(repository.findById("legacy-id")).isNull();
+        assertThat(dynamo.items).doesNotContainKey("legacy-id");
     }
 
     @Test
@@ -84,8 +117,7 @@ class DynamoDbHttpSessionRepositoryTest {
 
         assertThat(repository.findById(session.getId())).isNull();
         // The evicted item must also be removed from the backing store.
-        assertThat(dynamo.items).doesNotContainKey(
-                DynamoDbHttpSessionRepository.HTTP_SESSION_PREFIX + session.getId());
+        assertThat(dynamo.items).doesNotContainKey(session.getId());
     }
 
     @Test
@@ -95,7 +127,7 @@ class DynamoDbHttpSessionRepositoryTest {
         repository.save(session);
 
         // Corrupt the serialized attribute blob to simulate an incompatible/garbled payload.
-        final String key = DynamoDbHttpSessionRepository.HTTP_SESSION_PREFIX + session.getId();
+        final String key = session.getId();
         final Map<String, AttributeValue> item = new HashMap<>(dynamo.items.get(key));
         item.put("attributes", AttributeValue.builder()
                 .b(SdkBytes.fromByteArray(new byte[] {1, 2, 3, 4})).build());

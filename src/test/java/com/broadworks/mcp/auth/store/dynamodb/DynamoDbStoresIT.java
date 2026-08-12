@@ -52,6 +52,7 @@ import software.amazon.awssdk.services.kms.model.CreateKeyResponse;
 class DynamoDbStoresIT {
 
     private static final String SESSION_TABLE = "sessions";
+    private static final String HTTP_SESSION_TABLE = "http-sessions";
     private static final String USER_CONFIG_TABLE = "user-config";
     private static final String APPLICATION_ID = "test-app";
 
@@ -82,6 +83,7 @@ class DynamoDbStoresIT {
                 .build();
 
         createSessionTable();
+        createHttpSessionTable();
         createUserConfigTable();
 
         final CreateKeyResponse key = kms.createKey(b -> b.description("test key"));
@@ -111,6 +113,17 @@ class DynamoDbStoresIT {
                         .keySchema(KeySchemaElement.builder().attributeName("refreshToken").keyType(KeyType.HASH).build())
                         .projection(Projection.builder().projectionType(ProjectionType.ALL).build())
                         .build())
+                .build());
+    }
+
+    /** The interactive login session has its own table, keyed by the plain servlet session id. */
+    private static void createHttpSessionTable() {
+        dynamo.createTable(CreateTableRequest.builder()
+                .tableName(HTTP_SESSION_TABLE)
+                .billingMode(BillingMode.PAY_PER_REQUEST)
+                .attributeDefinitions(
+                        AttributeDefinition.builder().attributeName("pk").attributeType(ScalarAttributeType.S).build())
+                .keySchema(KeySchemaElement.builder().attributeName("pk").keyType(KeyType.HASH).build())
                 .build());
     }
 
@@ -179,9 +192,9 @@ class DynamoDbStoresIT {
     void httpSessionRoundTripAcrossRepositoryInstances() {
         // Two repository instances model the two load-balanced ECS tasks sharing one table.
         final DynamoDbHttpSessionRepository taskA =
-                new DynamoDbHttpSessionRepository(dynamo, SESSION_TABLE, Duration.ofMinutes(30));
+                new DynamoDbHttpSessionRepository(dynamo, HTTP_SESSION_TABLE, Duration.ofMinutes(30));
         final DynamoDbHttpSessionRepository taskB =
-                new DynamoDbHttpSessionRepository(dynamo, SESSION_TABLE, Duration.ofMinutes(30));
+                new DynamoDbHttpSessionRepository(dynamo, HTTP_SESSION_TABLE, Duration.ofMinutes(30));
 
         final org.springframework.session.MapSession created = taskA.createSession();
         created.setAttribute("SPRING_SECURITY_CONTEXT", "principal-abc");

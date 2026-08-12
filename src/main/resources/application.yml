@@ -55,6 +55,8 @@ broadworks:
   storage:
     backend: ${STORAGE_BACKEND:DYNAMODB}
     session-table: ${SESSION_TABLE:broadworks-mcp-sessions}
+    # Interactive Google-login HTTP sessions live in their own table (own lifecycle, own id space).
+    http-session-table: ${HTTP_SESSION_TABLE:broadworks-mcp-http-sessions}
     user-config-table: ${USER_CONFIG_TABLE:broadworks-mcp-user-config}
     kms-key-id: ${KMS_KEY_ID:}
     region: ${AWS_REGION:}
