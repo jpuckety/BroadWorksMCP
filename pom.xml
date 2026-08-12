@@ -269,23 +269,32 @@
             path fails with "Unable to create a Configuration, because no Bean Validation provider could
             be found. Add a provider like Hibernate Validator (RI) to your classpath."
 
-            spring-boot-starter-validation brings Hibernate Validator 8.x, but that is the JAKARTA
-            namespace (jakarta.validation) provider and is invisible to the toolkit's javax lookup, so
-            the matching javax-namespace RI (Hibernate Validator 6.2.x) is added here. The two providers
-            live in different namespaces and coexist without clashing. Hibernate Validator 6.2 also needs
-            an EL 3.0 implementation for constraint-message interpolation; the classpath only has the
-            jakarta EL (tomcat-embed-el), so the javax EL implementation (glassfish javax.el) is added
-            too. The redundant javax-namespace API pulled in transitively (jakarta.validation-api 2.0.2)
-            is excluded to avoid duplicating the validation-api 2.0.1 already declared above.
+            spring-boot-starter-validation brings Hibernate Validator 9.x, but that is the JAKARTA
+            namespace (jakarta.validation) provider and is invisible to the toolkit's javax lookup, so a
+            javax-namespace provider is needed as well. It must NOT be Hibernate Validator 6.2: that is
+            the same Maven artifact (org.hibernate.validator:hibernate-validator) as the jakarta version
+            the starter pulls in transitively, so Maven's nearest-wins mediation keeps the directly
+            declared 6.2 and drops the jakarta one entirely — leaving Spring itself without a jakarta
+            provider ("Failed to set up a Bean Validation provider:
+            jakarta.validation.NoProviderFoundException" from OptionalValidatorFactoryBean, and no
+            @Valid/@NotEmpty enforcement on our own beans).
+
+            Apache BVal 2.0.x is a different artifact that implements the same javax.validation 2.0 SPI,
+            so it satisfies the toolkit's javax lookup while Hibernate Validator 9 stays on the classpath
+            for the jakarta namespace. The two providers live in different namespaces and coexist without
+            clashing. BVal also needs an EL 3.0 implementation for constraint-message interpolation; the
+            classpath only has the jakarta EL (tomcat-embed-el), so the javax EL implementation
+            (glassfish javax.el) is added below. BVal's own copy of the javax API is excluded to avoid
+            duplicating the validation-api 2.0.1 already declared above.
         -->
         <dependency>
-            <groupId>org.hibernate.validator</groupId>
-            <artifactId>hibernate-validator</artifactId>
-            <version>6.2.5.Final</version>
+            <groupId>org.apache.bval</groupId>
+            <artifactId>bval-jsr</artifactId>
+            <version>2.0.6</version>
             <exclusions>
                 <exclusion>
-                    <groupId>jakarta.validation</groupId>
-                    <artifactId>jakarta.validation-api</artifactId>
+                    <groupId>javax.validation</groupId>
+                    <artifactId>validation-api</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -297,15 +306,11 @@
 
         <!--
             Jakarta Bean Validation API (jakarta.validation namespace) for the application's own code
-            (e.g. DynamicClientRegistrationController's @NotEmpty). In Spring Boot 4 the jakarta
-            validation API reaches the classpath transitively via spring-boot-starter-validation's
-            Hibernate Validator 8. However, this project also declares the LEGACY javax-namespace
-            Hibernate Validator 6.2 (required by the Alpaca toolkit, see above); because both are the
-            same Maven artifact (org.hibernate.validator:hibernate-validator) at different versions,
-            Maven's nearest-wins mediation keeps the directly declared 6.2 and drops the transitive 8 —
-            taking jakarta.validation-api down with it. That leaves jakarta.validation.constraints.*
-            unresolved at compile time ("package jakarta.validation.constraints does not exist"), so the
-            jakarta API is declared explicitly here. Version is managed by the Spring Boot 4 parent.
+            (e.g. DynamicClientRegistrationController's @NotEmpty). It also reaches the classpath
+            transitively via spring-boot-starter-validation's Hibernate Validator, but it is declared
+            explicitly here so that the code we compile against never depends on the legacy javax
+            provider's mediation outcome (see the note above). Version is managed by the Spring Boot 4
+            parent.
         -->
         <dependency>
             <groupId>jakarta.validation</groupId>
