@@ -191,6 +191,46 @@ STORAGE_BACKEND=IN_MEMORY java -jar target/broadworks-mcp-*.jar
 Under the `stdio` profile all logging already goes to **stderr** at `DEBUG` (stdout is reserved for
 the MCP protocol).
 
+### The BroadWorks host does not resolve (ECS)
+
+```
+Failed to establish a live BroadWorks connection to portal.vwave.net:
+java.net.UnknownHostException: portal.vwave.net: Temporary failure in name resolution
+```
+
+The wording matters: *Temporary failure in name resolution* (`EAI_AGAIN`) means the resolver did not
+answer or answered `SERVFAIL`, whereas *Name or service not known* (`EAI_NONAME`) means it answered
+that the name does not exist. In Fargate the resolver is the Amazon-provided one on the task's own
+ENI and is **not** reached through the NAT gateway, so a task that talks to DynamoDB and Google fine
+can still fail for one external zone.
+
+`LiveAlpacaConnectionFactory` therefore logs a resolver report next to such a failure — the
+`nameserver` / `search` / `options` lines the container is using, a repeat lookup of the host, and a
+lookup of its registrable parent domain:
+
+```
+WARN  BroadWorks host portal.vwave.net did not resolve; resolver=[nameserver 169.254.169.253] \
+      lookup(portal.vwave.net)=failed(...) lookup(vwave.net)=ok(...)
+```
+
+Read it as: the parent resolving but the host not means resolution works and the record is at fault;
+neither resolving while other traffic is healthy means the resolver cannot answer for that zone.
+
+The service runs with `enableExecuteCommand`, so the same checks can be made interactively (the
+image is Ubuntu-based: `getent`/`curl` are present, `dig` is not):
+
+```bash
+aws ecs execute-command --cluster <cluster> --task <task-id> --container broadworks-mcp \
+  --interactive --command "/bin/sh"
+
+cat /etc/resolv.conf                 # which nameserver is being asked
+getent hosts portal.vwave.net        # empty output + exit 2 => did not resolve
+curl -sv telnet://216.128.192.41:2208 --max-time 5   # reachability, bypassing DNS
+```
+
+If the lookup fails inside the task but succeeds from a public resolver (`dig @1.1.1.1
+portal.vwave.net`), the VPC resolver is the problem, not the app or the security groups.
+
 ---
 
 ## End-to-end auth flow
@@ -312,6 +352,16 @@ SecureString-backed secrets injected as container env.
    inherited), so a short-lived root `volume-init` container `chown`s them to uid 10001 and must exit
    successfully before the app container starts — without it the JVM cannot create Tomcat's temp dir
    (`Unable to create tempDir. java.io.tmpdir is set to /tmp`).
+
+   **ECS Exec is enabled** (`enableExecuteCommand`) so a running task can be inspected from the
+   inside — the tasks have no public IP, which otherwise leaves failures such as an unresolvable
+   BroadWorks host unobservable (see *The BroadWorks host does not resolve*). CDK adds the required
+   `ssmmessages:*` permissions to the task role, and the SSM control channel goes out through the NAT
+   gateway. Because the root filesystem is read-only, the agent ECS injects into the container gets
+   its own ephemeral volumes for `/var/lib/amazon` and `/var/log/amazon` (also `chown`ed by
+   `volume-init`); without them every session dies instantly and the task reports
+   `ExecuteCommandAgent` as `STOPPED`. Locally you need the AWS CLI
+   [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
 
 ---
 

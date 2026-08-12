@@ -50,6 +50,13 @@ public class LiveAlpacaConnectionFactory extends CachingAlpacaConnectionFactory 
             throw ex;
         } catch (Exception ex) {
             closeQuietly(server);
+            if (DnsDiagnostics.isNameResolutionFailure(ex)) {
+                // The bare UnknownHostException names neither the resolver that was asked nor whether
+                // the zone or the whole resolver path is at fault, which makes it undiagnosable from
+                // the logs alone (in ECS the tasks have no public IP and no interactive shell).
+                log.warn("BroadWorks host {} did not resolve; {}",
+                        resource.hostname(), DnsDiagnostics.describe(resource.hostname()));
+            }
             // No secrets are included: only the host and the toolkit's own message.
             throw new AlpacaException("Failed to establish a live BroadWorks connection to "
                     + resource.hostname() + ": " + ex.getMessage(), ex);

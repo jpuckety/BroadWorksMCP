@@ -271,6 +271,16 @@ export class BroadWorksMcpStack extends cdk.Stack {
       cpu: 512,
       memoryLimitMiB: 1024,
       desiredCount: 2,
+      // ECS Exec: `aws ecs execute-command` into a running task. The tasks have no public IP and sit
+      // in private subnets, so this is the only way to observe the container's own view of the
+      // network - notably DNS. It is what makes a failure such as
+      // "java.net.UnknownHostException: portal.vwave.net: Temporary failure in name resolution"
+      // diagnosable: from inside the task `getent hosts <broadworks-host>` distinguishes an
+      // unresolvable name from a resolver that never answers, and `cat /etc/resolv.conf` shows which
+      // nameserver (normally the Amazon-provided resolver) is being asked. CDK adds the required
+      // ssmmessages:* permissions to the task role; the SSM channel is reached outbound through the
+      // NAT gateway. See also the writable agent mounts further down (read-only root filesystem).
+      enableExecuteCommand: true,
       // Run on X86_64/Linux to match the amd64 image built above.
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
@@ -321,9 +331,17 @@ export class BroadWorksMcpStack extends cdk.Stack {
     const taskDefinition = service.taskDefinition;
     taskDefinition.addVolume({ name: 'app-cache' });
     taskDefinition.addVolume({ name: 'tmp' });
+    // ECS Exec support: the agent ECS injects into the container writes its state and logs under
+    // /var/lib/amazon and /var/log/amazon. With the immutable root filesystem below those writes
+    // fail and every `execute-command` session dies immediately ("Failed to start pty" / the task
+    // reports ExecuteCommandAgent as STOPPED), so both directories get their own ephemeral volume.
+    taskDefinition.addVolume({ name: 'ssm-agent-state' });
+    taskDefinition.addVolume({ name: 'ssm-agent-logs' });
     taskDefinition.defaultContainer!.addMountPoints(
       { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
       { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
+      { sourceVolume: 'ssm-agent-state', containerPath: '/var/lib/amazon', readOnly: false },
+      { sourceVolume: 'ssm-agent-logs', containerPath: '/var/log/amazon', readOnly: false },
     );
 
     // Fargate creates the ephemeral volumes above empty and owned by root:root 0755 — the image's
@@ -344,13 +362,19 @@ export class BroadWorksMcpStack extends cdk.Stack {
           'mkdir -p /app/.cache/jcs; ' +
           'chown -R 10001:10001 /app/.cache; ' +
           'chown 10001:10001 /tmp; ' +
-          'chmod 1777 /tmp',
+          'chmod 1777 /tmp; ' +
+          // The ECS Exec agent writes under these two mounts as the app container's user (uid 10001),
+          // so they need the same ownership fix-up as the mounts above.
+          'mkdir -p /var/lib/amazon/ssm /var/log/amazon/ssm; ' +
+          'chown -R 10001:10001 /var/lib/amazon /var/log/amazon',
       ],
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'volume-init', logGroup }),
     });
     volumeInit.addMountPoints(
       { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
       { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
+      { sourceVolume: 'ssm-agent-state', containerPath: '/var/lib/amazon', readOnly: false },
+      { sourceVolume: 'ssm-agent-logs', containerPath: '/var/log/amazon', readOnly: false },
     );
     // Hold the app container back until the fix-up has completed successfully.
     taskDefinition.defaultContainer!.addContainerDependencies({
