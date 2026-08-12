@@ -11,6 +11,7 @@ import com.broadworks.mcp.auth.store.AlpacaResource;
 import com.broadworks.mcp.auth.store.inmemory.InMemoryResourceStore;
 import com.broadworks.mcp.auth.store.inmemory.NoopEncryptionService;
 import com.broadworks.mcp.mcp.AlpacaException;
+import com.broadworks.mcp.mcp.HostAllowlist;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +28,9 @@ class ConnectionToolsTest {
     @BeforeEach
     void setUp() {
         resourceStore = new InMemoryResourceStore(new NoopEncryptionService());
-        tools = new ConnectionTools(resourceStore);
+        // The SSRF guard is exercised in HostAllowlistTest; these tests use fictional hostnames that
+        // must not depend on DNS, so target screening is opted out of here.
+        tools = new ConnectionTools(resourceStore, new HostAllowlist(true));
         authenticateAs("sub-1", "user@example.com");
     }
 
@@ -113,6 +116,20 @@ class ConnectionToolsTest {
                 tools.addConnection("Prod", "prod.example.com", 2208, "admin", "", null, null, null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("password");
+    }
+
+    @Test
+    void addConnectionRejectsInternalTargetsWithoutLeakingReachability() {
+        final ConnectionTools guarded = new ConnectionTools(resourceStore, new HostAllowlist(false));
+
+        for (String blocked : List.of("127.0.0.1", "localhost", "169.254.169.254", "10.1.2.3",
+                "192.168.0.1", "metadata.google.internal", "0.0.0.0")) {
+            assertThatThrownBy(() ->
+                    guarded.addConnection("Evil", blocked, 2208, "admin", "pw", null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessage("hostname is not a permitted BroadWorks connection target");
+        }
+        assertThat(resourceStore.listForUser("sub-1")).isEmpty();
     }
 
     @Test

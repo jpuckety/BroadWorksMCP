@@ -1,6 +1,7 @@
 package com.broadworks.mcp.auth.store.dynamodb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.time.Duration;
@@ -9,9 +10,11 @@ import java.util.List;
 import java.util.Map;
 
 import com.broadworks.mcp.auth.store.AlpacaResource;
+import com.broadworks.mcp.auth.store.EncryptionContext;
 import com.broadworks.mcp.auth.store.EncryptionService;
 import com.broadworks.mcp.auth.store.RegisteredClientRecord;
 import com.broadworks.mcp.auth.store.Session;
+import com.broadworks.mcp.auth.store.TokenHashing;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -128,7 +131,7 @@ class DynamoDbStoresIT {
 
     @Test
     void sessionCrudAndTokenLookups() {
-        final DynamoDbSessionStore store = new DynamoDbSessionStore(dynamo, SESSION_TABLE);
+        final DynamoDbSessionStore store = sessionStore();
         final Instant now = Instant.now();
         final Session session = new Session(null, "acc-1", "ref-1", "client-1", "sub-1",
                 "sub-1@example.com", "idt", "idpref",
@@ -139,11 +142,37 @@ class DynamoDbStoresIT {
 
         assertThat(store.getSessionByAccessToken("acc-1")).isPresent()
                 .get().extracting(Session::subject).isEqualTo("sub-1");
+        // Lookups still work, but the stored identifiers are digests, not the tokens themselves.
         assertThat(store.getSessionByRefreshToken("ref-1")).isPresent()
-                .get().extracting(Session::accessToken).isEqualTo("acc-1");
+                .get().extracting(Session::accessToken).isEqualTo(TokenHashing.sha256("acc-1"));
 
         store.deleteSession("acc-1");
         assertThat(store.getSessionByAccessToken("acc-1")).isEmpty();
+    }
+
+    @Test
+    void sessionItemNeverContainsReplayableCredentials() {
+        final DynamoDbSessionStore store = sessionStore();
+        final Instant now = Instant.now();
+        store.createSession(new Session(null, "acc-raw", "ref-raw", "client-1", "sub-raw",
+                "sub-raw@example.com", "google-id-token", "google-refresh-token",
+                now.plus(Duration.ofHours(1)), now.plus(Duration.ofDays(30)), now,
+                "authz-raw", "http://localhost:8080/mcp"));
+
+        final Map<String, AttributeValue> raw = dynamo.getItem(GetItemRequest.builder()
+                .tableName(SESSION_TABLE)
+                .key(Map.of("pk", AttributeValue.fromS("sess#" + TokenHashing.sha256("acc-raw"))))
+                .build()).item();
+
+        assertThat(raw).isNotEmpty();
+        assertThat(raw.values())
+                .noneMatch(value -> "acc-raw".equals(value.s()) || "ref-raw".equals(value.s())
+                        || "google-id-token".equals(value.s()) || "google-refresh-token".equals(value.s()));
+        assertThat(raw.get("refreshToken").s()).isEqualTo(TokenHashing.sha256("ref-raw"));
+
+        // ...yet the encrypted upstream tokens round-trip for the owning subject.
+        assertThat(store.getSessionByAccessToken("acc-raw")).isPresent()
+                .get().extracting(Session::idToken).isEqualTo("google-id-token");
     }
 
     @Test
@@ -169,7 +198,7 @@ class DynamoDbStoresIT {
 
     @Test
     void clientCrud() {
-        final DynamoDbSessionStore store = new DynamoDbSessionStore(dynamo, SESSION_TABLE);
+        final DynamoDbSessionStore store = sessionStore();
         final RegisteredClientRecord client = new RegisteredClientRecord(
                 "client-1", "App", List.of("https://a/cb"), List.of("openid"),
                 List.of("authorization_code", "refresh_token"), null,
@@ -216,9 +245,39 @@ class DynamoDbStoresIT {
 
     @Test
     void kmsEncryptionRoundTrip() {
+        final Map<String, String> context = EncryptionContext.forResource(APPLICATION_ID, "sub-a", "res-1");
         final String plaintext = "s3cret-value";
-        final String ciphertext = encryptionService.encrypt(plaintext);
+        final String ciphertext = encryptionService.encrypt(plaintext, context);
         assertThat(ciphertext).isNotEqualTo(plaintext);
-        assertThat(encryptionService.decrypt(ciphertext)).isEqualTo(plaintext);
+        assertThat(encryptionService.decrypt(ciphertext, context)).isEqualTo(plaintext);
+    }
+
+    @Test
+    void kmsDecryptRejectsCiphertextMovedToAnotherRecord() {
+        final Map<String, String> owner = EncryptionContext.forResource(APPLICATION_ID, "sub-a", "res-1");
+        final Map<String, String> other = EncryptionContext.forResource(APPLICATION_ID, "sub-b", "res-1");
+        final String ciphertext = encryptionService.encrypt("s3cret-value", owner);
+
+        assertThatThrownBy(() -> encryptionService.decrypt(ciphertext, other))
+                .isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void envelopeEncryptionRoundTripsPayloadsLargerThanTheKmsLimit() {
+        final Map<String, String> context = EncryptionContext.forAuthorization(APPLICATION_ID, "authz-1");
+        final byte[] plaintext = new byte[32 * 1024];
+        new java.util.Random(42).nextBytes(plaintext);
+
+        final byte[] ciphertext = encryptionService.encryptBytes(plaintext, context);
+        assertThat(ciphertext).isNotEqualTo(plaintext);
+        assertThat(encryptionService.decryptBytes(ciphertext, context)).isEqualTo(plaintext);
+
+        final Map<String, String> other = EncryptionContext.forAuthorization(APPLICATION_ID, "authz-2");
+        assertThatThrownBy(() -> encryptionService.decryptBytes(ciphertext, other))
+                .isInstanceOf(Exception.class);
+    }
+
+    private static DynamoDbSessionStore sessionStore() {
+        return new DynamoDbSessionStore(dynamo, SESSION_TABLE, APPLICATION_ID, encryptionService);
     }
 }

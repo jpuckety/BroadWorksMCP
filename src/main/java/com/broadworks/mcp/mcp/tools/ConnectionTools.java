@@ -9,11 +9,12 @@ import com.broadworks.mcp.auth.session.UserInfo;
 import com.broadworks.mcp.auth.store.AlpacaResource;
 import com.broadworks.mcp.auth.store.ResourceStore;
 import com.broadworks.mcp.mcp.AlpacaException;
+import com.broadworks.mcp.mcp.HostAllowlist;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,16 +23,31 @@ import org.springframework.stereotype.Component;
  * <p>These tools let an MCP client add, list, and remove the per-tenant connection resources that the
  * {@code AlpacaConnectionFactory} later resolves when a BroadWorks operation runs. Every operation is
  * scoped to the caller's {@code subject}; secrets are encrypted at rest by the {@link ResourceStore}
- * and are never returned or logged.</p>
+ * and are never returned or logged. Connection targets are screened by the {@link HostAllowlist} so a
+ * caller cannot point the server at internal infrastructure (SSRF).</p>
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ConnectionTools {
 
     private static final String DEFAULT_LOGIN_TYPE = "SYSTEM";
 
     private final ResourceStore resourceStore;
+    private final HostAllowlist hostAllowlist;
+
+    @Autowired
+    public ConnectionTools(ResourceStore resourceStore, HostAllowlist hostAllowlist) {
+        this.resourceStore = resourceStore;
+        this.hostAllowlist = hostAllowlist;
+    }
+
+    /**
+     * Convenience constructor for contexts that carry no SSRF configuration; applies the secure
+     * default (private / loopback / link-local targets blocked).
+     */
+    public ConnectionTools(ResourceStore resourceStore) {
+        this(resourceStore, new HostAllowlist(false));
+    }
 
     @Tool(name = "broadworks_list_connections",
             description = "List the BroadWorks server connections configured for the authenticated user "
@@ -78,6 +94,10 @@ public class ConnectionTools {
         }
         if (port <= 0 || port > 65535) {
             throw new AlpacaException("port must be between 1 and 65535");
+        }
+        if (!hostAllowlist.isAllowed(hostname)) {
+            // Deliberately uniform message: never reveal whether the target exists or is reachable.
+            throw new AlpacaException("hostname is not a permitted BroadWorks connection target");
         }
         if (username == null || username.isBlank()) {
             throw new AlpacaException("username is required");

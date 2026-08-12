@@ -67,6 +67,12 @@ broadworks:
       registered-client-ttl: ${REGISTERED_CLIENT_TTL:P90D}
     redirect:
       allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
+  security:
+    # SSRF guard for broadworks_add_connection: connection targets resolving to loopback, link-local
+    # (including the 169.254.169.254 instance-metadata endpoint), RFC 1918 / unique-local private, any-
+    # local or multicast addresses are rejected, as are unresolvable hostnames. Set to true ONLY for
+    # local development against a BroadWorks server on a private LAN; it disables that guard entirely.
+    allow-private-network-targets: ${ALLOW_PRIVATE_NETWORK_TARGETS:false}
   alpaca:
     # Live BroadWorks connectivity (real OCI login via the Alpaca toolkit). Default true for
     # runtime/production. Set ALPACA_LIVE=false (or broadworks.alpaca.live=false) only for unit/

@@ -21,7 +21,9 @@ jcs.default.elementattributes.IsLateral=true
 
 jcs.auxiliary.DC=org.apache.jcs.auxiliary.disk.indexed.IndexedDiskCacheFactory
 jcs.auxiliary.DC.attributes=org.apache.jcs.auxiliary.disk.indexed.IndexedDiskCacheAttributes
-jcs.auxiliary.DC.attributes.DiskPath=/tmp/jcs
+# App-owned, relative to the process working directory (/app in the container image, the repo root
+# for local `mvn spring-boot:run`) instead of the world-writable /tmp/jcs.
+jcs.auxiliary.DC.attributes.DiskPath=.cache/jcs
 jcs.auxiliary.DC.attributes.MaxPurgatorySize=10000
 jcs.auxiliary.DC.attributes.MaxKeySize=10000
 jcs.auxiliary.DC.attributes.OptimizeAtRemoveCount=3000

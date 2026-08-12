@@ -275,8 +275,15 @@ SecureString-backed secrets injected as container env.
    The certificate is DNS-validated: after `deploy` starts, add the CNAME record ACM shows in the
    console (or point `hostname` at a Route 53 zone in this account) so validation can complete.
    To reuse an existing, already-validated certificate instead, pass
-   `-c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>`. Without either a `hostname` or
-   a `certificateArn`, the ALB listens on HTTP only (development).
+   `-c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>`. **TLS is mandatory**: without
+   either a `hostname` or a `certificateArn`, synthesis fails. For local/dev experiments only, opt
+   out with `-c allowInsecureHttp=true` (or `ALLOW_INSECURE_HTTP=true`) to get a plain HTTP
+   listener. With HTTPS, port 80 is opened solely to redirect to 443.
+
+   The internet-facing ALB is fronted by a WAFv2 WebACL (AWS managed common + known-bad-inputs rule
+   groups, a general per-IP rate limit and tighter 100 req / 5 min limits on `/oauth/register` and
+   `/oauth2/token`). The tasks run non-root (uid 10001) with a read-only root filesystem; `/tmp` and
+   the JCS disk cache (`/app/.cache`) are ephemeral task volumes.
 
 ---
 

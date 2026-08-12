@@ -13,6 +13,7 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
+import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 
 export interface BroadWorksMcpStackProps extends cdk.StackProps {
@@ -40,6 +41,13 @@ export interface BroadWorksMcpStackProps extends cdk.StackProps {
    * be supplied via the `hostedZoneId` context value.
    */
   readonly hostedZoneId?: string;
+  /**
+   * Development-only opt-out that allows the ALB to listen on plain HTTP when neither
+   * {@link certificateArn} nor {@link hostname} is supplied. Defaults to false: synthesis fails
+   * rather than silently deploying an unencrypted public listener. May also be supplied via the
+   * `allowInsecureHttp` CDK context value.
+   */
+  readonly allowInsecureHttp?: boolean;
 }
 
 /**
@@ -183,15 +191,42 @@ export class BroadWorksMcpStack extends cdk.Stack {
       platform: Platform.LINUX_AMD64,
     });
 
+    // Let CloudWatch Logs use the customer-managed key for the log group below. The encryption
+    // context condition scopes the grant to log groups in this account/region.
+    dataKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowCloudWatchLogs',
+        principals: [new iam.ServicePrincipal(`logs.${this.region}.amazonaws.com`)],
+        actions: [
+          'kms:Encrypt*',
+          'kms:Decrypt*',
+          'kms:ReEncrypt*',
+          'kms:GenerateDataKey*',
+          'kms:Describe*',
+        ],
+        resources: ['*'],
+        conditions: {
+          ArnLike: {
+            'kms:EncryptionContext:aws:logs:arn': `arn:${this.partition}:logs:${this.region}:${this.account}:log-group:*`,
+          },
+        },
+      }),
+    );
+
     const logGroup = new logs.LogGroup(this, 'LogGroup', {
       retention: logs.RetentionDays.ONE_MONTH,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      encryptionKey: dataKey,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     const cluster = new ecs.Cluster(this, 'Cluster', { vpc, containerInsights: true });
 
+    // TLS is mandatory. Plain HTTP is only possible behind an explicit development opt-out.
+    const allowInsecureHttp: boolean =
+      props.allowInsecureHttp ?? String(this.node.tryGetContext('allowInsecureHttp') ?? 'false') === 'true';
+
     // Prefer an explicitly provided certificate ARN; otherwise create a certificate from the
-    // hostname (DNS-validated). Without either, the ALB falls back to HTTP (development only).
+    // hostname (DNS-validated).
     let certificate: acm.ICertificate | undefined;
     if (props.certificateArn) {
       certificate = acm.Certificate.fromCertificateArn(this, 'Certificate', props.certificateArn);
@@ -204,6 +239,12 @@ export class BroadWorksMcpStack extends cdk.Stack {
           ? acm.CertificateValidation.fromDns(hostedZone)
           : acm.CertificateValidation.fromDns(),
       });
+    } else if (!allowInsecureHttp) {
+      throw new Error(
+        'HTTPS is required: provide -c hostname=mcp.example.com (to create an ACM certificate) or ' +
+          '-c certificateArn=arn:aws:acm:<region>:<acct>:certificate/<id>. For local/dev only, opt out ' +
+          'of TLS with -c allowInsecureHttp=true.',
+      );
     }
 
     // ---- Fargate service behind an ALB ------------------------------------
@@ -225,6 +266,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
       assignPublicIp: false,
       protocol: certificate ? elbv2.ApplicationProtocol.HTTPS : elbv2.ApplicationProtocol.HTTP,
       certificate,
+      // With HTTPS, also open :80 purely to 301-redirect clients to :443.
       redirectHTTP: certificate !== undefined,
       taskImageOptions: {
         image,
@@ -251,6 +293,140 @@ export class BroadWorksMcpStack extends cdk.Stack {
           ALPACA_LICENSE_KEY: ecs.Secret.fromSsmParameter(alpacaLicenseKey),
         },
       },
+    });
+
+    // ---- Container hardening ----------------------------------------------
+    // Immutable root filesystem; everything the JVM writes to is an explicit ephemeral volume:
+    // /app/.cache holds the JCS disk cache (cache.ccf DiskPath=.cache/jcs) and /tmp the JVM's
+    // temp/hsperfdata files.
+    const taskDefinition = service.taskDefinition;
+    taskDefinition.addVolume({ name: 'app-cache' });
+    taskDefinition.addVolume({ name: 'tmp' });
+    taskDefinition.defaultContainer!.addMountPoints(
+      { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
+      { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
+    );
+    // ReadonlyRootFilesystem is not exposed by the L2 container definition props.
+    (taskDefinition.node.defaultChild as ecs.CfnTaskDefinition).addPropertyOverride(
+      'ContainerDefinitions.0.ReadonlyRootFilesystem',
+      true,
+    );
+
+    // ---- WAF (internet-facing ALB) ----------------------------------------
+    const webAcl = new wafv2.CfnWebACL(this, 'WebAcl', {
+      name: 'broadworks-mcp-web-acl',
+      scope: 'REGIONAL',
+      defaultAction: { allow: {} },
+      visibilityConfig: {
+        cloudWatchMetricsEnabled: true,
+        sampledRequestsEnabled: true,
+        metricName: 'broadworks-mcp-web-acl',
+      },
+      rules: [
+        {
+          name: 'AWSManagedRulesCommonRuleSet',
+          priority: 0,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesCommonRuleSet' },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            sampledRequestsEnabled: true,
+            metricName: 'CommonRuleSet',
+          },
+        },
+        {
+          name: 'AWSManagedRulesKnownBadInputsRuleSet',
+          priority: 1,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesKnownBadInputsRuleSet',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            sampledRequestsEnabled: true,
+            metricName: 'KnownBadInputs',
+          },
+        },
+        {
+          // Dynamic Client Registration is unauthenticated: 100 requests / 5 min / IP.
+          name: 'RateLimitOauthRegister',
+          priority: 2,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              limit: 100,
+              evaluationWindowSec: 300,
+              aggregateKeyType: 'IP',
+              scopeDownStatement: {
+                byteMatchStatement: {
+                  searchString: '/oauth/register',
+                  fieldToMatch: { uriPath: {} },
+                  positionalConstraint: 'STARTS_WITH',
+                  textTransformations: [{ priority: 0, type: 'LOWERCASE' }],
+                },
+              },
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            sampledRequestsEnabled: true,
+            metricName: 'RateLimitOauthRegister',
+          },
+        },
+        {
+          // Token endpoint (code exchange + refresh): 100 requests / 5 min / IP.
+          name: 'RateLimitOauthToken',
+          priority: 3,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              limit: 100,
+              evaluationWindowSec: 300,
+              aggregateKeyType: 'IP',
+              scopeDownStatement: {
+                byteMatchStatement: {
+                  searchString: '/oauth2/token',
+                  fieldToMatch: { uriPath: {} },
+                  positionalConstraint: 'STARTS_WITH',
+                  textTransformations: [{ priority: 0, type: 'LOWERCASE' }],
+                },
+              },
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            sampledRequestsEnabled: true,
+            metricName: 'RateLimitOauthToken',
+          },
+        },
+        {
+          name: 'RateLimitGeneral',
+          priority: 4,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              limit: 2000,
+              evaluationWindowSec: 300,
+              aggregateKeyType: 'IP',
+            },
+          },
+          visibilityConfig: {
+            cloudWatchMetricsEnabled: true,
+            sampledRequestsEnabled: true,
+            metricName: 'RateLimitGeneral',
+          },
+        },
+      ],
+    });
+
+    new wafv2.CfnWebACLAssociation(this, 'WebAclAssociation', {
+      resourceArn: service.loadBalancer.loadBalancerArn,
+      webAclArn: webAcl.attrArn,
     });
 
     // Actuator health probe for ALB target group.
@@ -318,8 +494,8 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     if (!certificate) {
       cdk.Annotations.of(this).addWarning(
-        'No hostname or certificate provided: the ALB listens on HTTP only. Provide -c hostname=mcp.example.com ' +
-          '(to create a certificate) or -c certificateArn=... for HTTPS in production.',
+        'allowInsecureHttp is set: the ALB listens on HTTP only. Never use this outside local/dev; provide ' +
+          '-c hostname=mcp.example.com (to create a certificate) or -c certificateArn=... for HTTPS.',
       );
     }
 

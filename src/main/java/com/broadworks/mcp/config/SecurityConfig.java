@@ -56,6 +56,21 @@ public class SecurityConfig {
             "/login/oauth2/code/**"
     };
 
+    /**
+     * Paths exempt from CSRF: the bearer-token-only MCP transports and the RFC 7591 registration
+     * endpoint, all called by non-browser clients that hold no session and cannot carry a CSRF token.
+     * Everything else on this chain (notably the {@code oauth2Login} flow and the Spring-Session-backed
+     * browser paths) keeps CSRF protection. The Authorization Server endpoints ({@code /oauth2/token},
+     * {@code /oauth2/authorize}, ...) live on their own filter chain, where
+     * {@code OAuth2AuthorizationServerConfigurer} already ignores CSRF for them.
+     */
+    private static final String[] CSRF_EXEMPT_PATHS = {
+            "/mcp",
+            "/mcp/**",
+            "/sse",
+            "/oauth/register"
+    };
+
     @Bean
     @Order(2)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
@@ -86,8 +101,9 @@ public class SecurityConfig {
                                 .oidcUserService(oidcUserService())))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(bearerChallengeEntryPoint))
-                // Bearer APIs are stateless; disable CSRF (interactive Google login is redirect based).
-                .csrf(csrf -> csrf.disable());
+                // Bearer APIs are stateless and cannot carry a CSRF token; the session-backed browser
+                // paths (oauth2Login, /oauth2/authorize) stay CSRF protected.
+                .csrf(csrf -> csrf.ignoringRequestMatchers(CSRF_EXEMPT_PATHS));
         return http.build();
     }
 

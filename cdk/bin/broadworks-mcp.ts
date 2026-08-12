@@ -18,8 +18,13 @@ new BroadWorksMcpStack(app, 'BroadWorksMcpStack', {
   // the hostname. Provide via:
   //   cdk deploy -c certificateArn=arn:aws:acm:...:certificate/...
   // or the CERTIFICATE_ARN environment variable. If neither hostname nor certificate is given,
-  // an HTTP-only listener is created (development only).
+  // synthesis fails unless the insecure opt-out below is set.
   certificateArn: app.node.tryGetContext('certificateArn') ?? process.env.CERTIFICATE_ARN,
+  // Local/dev only: allow a plain HTTP listener when no hostname/certificate is available.
+  //   cdk synth -c allowInsecureHttp=true
+  // or ALLOW_INSECURE_HTTP=true.
+  allowInsecureHttp:
+    String(app.node.tryGetContext('allowInsecureHttp') ?? process.env.ALLOW_INSECURE_HTTP ?? 'false') === 'true',
   // Route 53 hosted zone that owns the hostname. When provided, the stack creates the DNS alias
   // records (hostname -> ALB) and DNS-validates the certificate automatically. When omitted, the
   // zone name is derived from the hostname (mcp.example.com -> example.com). Provide via:

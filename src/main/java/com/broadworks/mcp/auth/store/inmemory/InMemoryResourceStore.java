@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.broadworks.mcp.auth.store.AlpacaResource;
+import com.broadworks.mcp.auth.store.EncryptionContext;
 import com.broadworks.mcp.auth.store.EncryptionService;
 import com.broadworks.mcp.auth.store.ResourceStore;
 
@@ -16,6 +17,8 @@ import com.broadworks.mcp.auth.store.ResourceStore;
  * the durable backend, and decrypted on read. Non-durable and single-node only.</p>
  */
 public class InMemoryResourceStore implements ResourceStore {
+
+    private static final String APPLICATION_ID = "in-memory";
 
     /** subject -> (resourceId -> resource with encrypted password). */
     private final ConcurrentMap<String, ConcurrentMap<String, AlpacaResource>> bySubject =
@@ -36,7 +39,7 @@ public class InMemoryResourceStore implements ResourceStore {
         if (resources == null) {
             return List.of();
         }
-        return resources.values().stream().map(this::decrypt).toList();
+        return resources.values().stream().map(resource -> decrypt(subject, resource)).toList();
     }
 
     @Override
@@ -48,13 +51,13 @@ public class InMemoryResourceStore implements ResourceStore {
         if (resources == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(resources.get(resourceId)).map(this::decrypt);
+        return Optional.ofNullable(resources.get(resourceId)).map(resource -> decrypt(subject, resource));
     }
 
     @Override
     public void put(String subject, AlpacaResource resource) {
         bySubject.computeIfAbsent(subject, ignored -> new ConcurrentHashMap<>())
-                .put(resource.resourceId(), encrypt(resource));
+                .put(resource.resourceId(), encrypt(subject, resource));
     }
 
     @Override
@@ -68,11 +71,13 @@ public class InMemoryResourceStore implements ResourceStore {
         }
     }
 
-    private AlpacaResource encrypt(AlpacaResource resource) {
-        return resource.withPassword(encryptionService.encrypt(resource.password()));
+    private AlpacaResource encrypt(String subject, AlpacaResource resource) {
+        return resource.withPassword(encryptionService.encrypt(resource.password(),
+                EncryptionContext.forResource(APPLICATION_ID, subject, resource.resourceId())));
     }
 
-    private AlpacaResource decrypt(AlpacaResource resource) {
-        return resource.withPassword(encryptionService.decrypt(resource.password()));
+    private AlpacaResource decrypt(String subject, AlpacaResource resource) {
+        return resource.withPassword(encryptionService.decrypt(resource.password(),
+                EncryptionContext.forResource(APPLICATION_ID, subject, resource.resourceId())));
     }
 }

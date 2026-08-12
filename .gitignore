@@ -17,6 +17,8 @@ alpaca-license.txt
 
 # ===== Logs & temp =====
 *.log
+# JCS disk cache for Alpaca OCI responses (see src/main/resources/cache.ccf).
+.cache/
 
 # ===== OS / editor =====
 .DS_Store

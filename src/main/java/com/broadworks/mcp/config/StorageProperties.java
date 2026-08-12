@@ -14,6 +14,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param userConfigTable  DynamoDB table holding per-user Alpaca resources.
  * @param kmsKeyId          customer-managed KMS key id/ARN used to encrypt secret fields.
  * @param region            AWS region for DynamoDB / KMS clients (falls back to the SDK default chain).
+ * @param allowInMemory     explicit acknowledgement that the unencrypted, non-durable in-memory
+ *                          backend may be used outside a dev/local/stdio/test run.
  */
 @ConfigurationProperties(prefix = "broadworks.storage")
 public record StorageProperties(
@@ -21,7 +23,8 @@ public record StorageProperties(
         String sessionTable,
         String userConfigTable,
         String kmsKeyId,
-        String region
+        String region,
+        boolean allowInMemory
 ) {
     /** Available storage backends. */
     public enum Backend {

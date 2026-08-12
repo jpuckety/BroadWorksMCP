@@ -23,6 +23,10 @@ import org.springframework.security.oauth2.server.authorization.settings.TokenSe
  * SAS asks to persist, clients are always materialised as <b>public</b> (no client secret,
  * {@code none} auth), PKCE-required, with <b>opaque (REFERENCE)</b> access tokens and the configured
  * TTLs. The registered client id and internal id are the same value.</p>
+ *
+ * <p>Expiry is re-checked here rather than relying on the store: DynamoDB TTL deletion is
+ * best-effort and can lag by up to ~48 hours, during which an expired registration must not keep
+ * working.</p>
  */
 @RequiredArgsConstructor
 public class StoreBackedRegisteredClientRepository implements RegisteredClientRepository {
@@ -52,12 +56,22 @@ public class StoreBackedRegisteredClientRepository implements RegisteredClientRe
 
     @Override
     public RegisteredClient findById(String id) {
-        return sessionStore.getClient(id).map(this::toRegisteredClient).orElse(null);
+        return sessionStore.getClient(id)
+                .filter(StoreBackedRegisteredClientRepository::isCurrent)
+                .map(this::toRegisteredClient)
+                .orElse(null);
     }
 
     @Override
     public RegisteredClient findByClientId(String clientId) {
-        return sessionStore.getClient(clientId).map(this::toRegisteredClient).orElse(null);
+        return sessionStore.getClient(clientId)
+                .filter(StoreBackedRegisteredClientRepository::isCurrent)
+                .map(this::toRegisteredClient)
+                .orElse(null);
+    }
+
+    private static boolean isCurrent(RegisteredClientRecord record) {
+        return record.expiresAt() == null || Instant.now().isBefore(record.expiresAt());
     }
 
     private RegisteredClient toRegisteredClient(RegisteredClientRecord record) {

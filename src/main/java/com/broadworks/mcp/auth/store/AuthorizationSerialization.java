@@ -15,6 +15,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Same class of risk as HTTP session serialization: incompatible Security class changes on
  * redeploy may drop pending authorizations (user re-auths). Acceptable for short-lived codes.</p>
+ *
+ * <p>Reads are constrained by {@link SerializationFilters#AUTHORIZATION_FILTER} so a tampered
+ * payload cannot instantiate arbitrary classes.</p>
  */
 public final class AuthorizationSerialization {
 
@@ -39,6 +42,7 @@ public final class AuthorizationSerialization {
             return null;
         }
         try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(data))) {
+            in.setObjectInputFilter(SerializationFilters.AUTHORIZATION_FILTER);
             final Object value = in.readObject();
             if (value == null) {
                 return null;
@@ -49,7 +53,7 @@ public final class AuthorizationSerialization {
                 return null;
             }
             return type.cast(value);
-        } catch (IOException | ClassNotFoundException | ClassCastException ex) {
+        } catch (IOException | ClassNotFoundException | RuntimeException ex) {
             log.warn("Discarding unreadable OAuth authorization payload ({}): {}",
                     ex.getClass().getSimpleName(), ex.getMessage());
             return null;

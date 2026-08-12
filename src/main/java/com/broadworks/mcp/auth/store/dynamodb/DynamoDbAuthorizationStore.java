@@ -9,6 +9,9 @@ import java.util.Optional;
 
 import com.broadworks.mcp.auth.store.AuthorizationSerialization;
 import com.broadworks.mcp.auth.store.AuthorizationStore;
+import com.broadworks.mcp.auth.store.EncryptionContext;
+import com.broadworks.mcp.auth.store.EncryptionService;
+import com.broadworks.mcp.auth.store.TokenHashing;
 
 import org.springframework.lang.Nullable;
 import org.springframework.security.oauth2.core.OAuth2Token;
@@ -29,10 +32,14 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
  *
  * <p>Layout:
  * <ul>
- *   <li>{@code oauth#&lt;id&gt;} — serialized authorization payload + pointer list</li>
- *   <li>{@code oauthtok#&lt;type&gt;#&lt;value&gt;} — reverse pointer to authorization id</li>
+ *   <li>{@code oauth#&lt;id&gt;} — encrypted serialized authorization payload + pointer list</li>
+ *   <li>{@code oauthtok#&lt;type&gt;#&lt;sha256(value)&gt;} — reverse pointer to authorization id</li>
  * </ul>
  * Prefixes avoid collisions with {@code sess#} / {@code client#} / HTTP-session keys.</p>
+ *
+ * <p>Token values are hashed before they become part of a key so no replayable credential is ever
+ * written, and the payload (which holds the tokens themselves plus the authenticated principal) is
+ * encrypted at rest via {@link EncryptionService}, bound to the authorization id.</p>
  */
 public class DynamoDbAuthorizationStore implements AuthorizationStore {
 
@@ -51,10 +58,15 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
 
     private final DynamoDbClient client;
     private final String tableName;
+    private final String applicationId;
+    private final EncryptionService encryptionService;
 
-    public DynamoDbAuthorizationStore(DynamoDbClient client, String tableName) {
+    public DynamoDbAuthorizationStore(DynamoDbClient client, String tableName, String applicationId,
+                                      EncryptionService encryptionService) {
         this.client = client;
         this.tableName = tableName;
+        this.applicationId = applicationId;
+        this.encryptionService = encryptionService;
     }
 
     @Override
@@ -77,7 +89,9 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         authItem.put(TYPE, s(TYPE_AUTH));
         authItem.put(A_AUTH_ID, s(authorization.getId()));
         authItem.put(A_PAYLOAD, AttributeValue.builder()
-                .b(SdkBytes.fromByteArray(AuthorizationSerialization.serialize(authorization)))
+                .b(SdkBytes.fromByteArray(encryptionService.encryptBytes(
+                        AuthorizationSerialization.serialize(authorization),
+                        context(authorization.getId()))))
                 .build());
         authItem.put(A_POINTERS, stringList(newPointers));
         if (ttl != null) {
@@ -182,8 +196,14 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         if (payload == null || payload.b() == null) {
             return Optional.empty();
         }
+        final String authorizationId = str(response.item(), A_AUTH_ID);
+        final byte[] plaintext = encryptionService.decryptBytes(payload.b().asByteArray(), context(authorizationId));
         return Optional.ofNullable(
-                AuthorizationSerialization.deserialize(payload.b().asByteArray(), OAuth2Authorization.class));
+                AuthorizationSerialization.deserialize(plaintext, OAuth2Authorization.class));
+    }
+
+    private Map<String, String> context(String authorizationId) {
+        return EncryptionContext.forAuthorization(applicationId, authorizationId);
     }
 
     private List<String> loadPointerList(String authorizationId) {
@@ -228,7 +248,7 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     }
 
     private static String pointerKey(String type, String value) {
-        return TOKEN_PREFIX + type + "#" + value;
+        return TOKEN_PREFIX + type + "#" + TokenHashing.sha256(value);
     }
 
     private static String tokenTypeFromPointer(String pointer) {
@@ -270,6 +290,11 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
             final List<TransactWriteItem> batch = items.subList(i, Math.min(i + batchSize, items.size()));
             client.transactWriteItems(TransactWriteItemsRequest.builder().transactItems(batch).build());
         }
+    }
+
+    private static String str(Map<String, AttributeValue> item, String key) {
+        final AttributeValue value = item.get(key);
+        return value == null ? null : value.s();
     }
 
     private static AttributeValue s(String value) {

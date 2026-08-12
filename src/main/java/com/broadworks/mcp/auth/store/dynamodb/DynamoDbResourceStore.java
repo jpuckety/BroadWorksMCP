@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import com.broadworks.mcp.auth.store.AlpacaResource;
+import com.broadworks.mcp.auth.store.EncryptionContext;
 import com.broadworks.mcp.auth.store.EncryptionService;
 import com.broadworks.mcp.auth.store.ResourceStore;
 
@@ -23,8 +24,10 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  *
  * <p>Layout: partition key {@code applicationId}, sort key {@code <subject>#<resourceId>}. The
  * secret {@code password} field is encrypted at rest via the injected {@link EncryptionService} and
- * decrypted on read; callers always work with plaintext {@link AlpacaResource} values. Strict tenant
- * isolation is enforced by scoping every query to a {@code subject} prefix.</p>
+ * decrypted on read; callers always work with plaintext {@link AlpacaResource} values. The
+ * encryption context binds each ciphertext to its {@code applicationId}/{@code subject}/
+ * {@code resourceId}, so a relocated blob will not decrypt. Strict tenant isolation is enforced by
+ * scoping every query to a {@code subject} prefix.</p>
  */
 public class DynamoDbResourceStore implements ResourceStore {
 
@@ -63,7 +66,7 @@ public class DynamoDbResourceStore implements ResourceStore {
                         ":pk", s(applicationId),
                         ":prefix", s(subject + "#")))
                 .build());
-        return response.items().stream().map(this::toResourceDecrypted).toList();
+        return response.items().stream().map(item -> toResourceDecrypted(subject, item)).toList();
     }
 
     @Override
@@ -75,7 +78,7 @@ public class DynamoDbResourceStore implements ResourceStore {
         if (!response.hasItem() || response.item().isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(toResourceDecrypted(response.item()));
+        return Optional.of(toResourceDecrypted(subject, response.item()));
     }
 
     @Override
@@ -89,8 +92,9 @@ public class DynamoDbResourceStore implements ResourceStore {
         item.put(A_PORT, n(Integer.toString(resource.port())));
         putIfPresent(item, A_LOGIN_TYPE, resource.loginType());
         putIfPresent(item, A_USERNAME, resource.username());
-        // Encrypt the secret before persisting.
-        putIfPresent(item, A_PASSWORD, encryptionService.encrypt(resource.password()));
+        // Encrypt the secret before persisting, bound to this application/subject/resource.
+        putIfPresent(item, A_PASSWORD, encryptionService.encrypt(resource.password(),
+                EncryptionContext.forResource(applicationId, subject, resource.resourceId())));
         item.put(A_USE_PRIVATE_AS, AttributeValue.builder()
                 .bool(resource.usePrivateApplicationServerAddress()).build());
         client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
@@ -110,15 +114,17 @@ public class DynamoDbResourceStore implements ResourceStore {
         return Map.of(PK, s(applicationId), SK, s(subject + "#" + resourceId));
     }
 
-    private AlpacaResource toResourceDecrypted(Map<String, AttributeValue> item) {
+    private AlpacaResource toResourceDecrypted(String subject, Map<String, AttributeValue> item) {
+        final String resourceId = str(item, A_RESOURCE_ID);
         return new AlpacaResource(
-                str(item, A_RESOURCE_ID),
+                resourceId,
                 str(item, A_DISPLAY_NAME),
                 str(item, A_HOSTNAME),
                 intVal(item, A_PORT),
                 str(item, A_LOGIN_TYPE),
                 str(item, A_USERNAME),
-                encryptionService.decrypt(str(item, A_PASSWORD)),
+                encryptionService.decrypt(str(item, A_PASSWORD),
+                        EncryptionContext.forResource(applicationId, subject, resourceId)),
                 boolVal(item, A_USE_PRIVATE_AS)
         );
     }

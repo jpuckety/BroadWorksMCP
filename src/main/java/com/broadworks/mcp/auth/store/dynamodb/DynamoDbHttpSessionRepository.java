@@ -10,6 +10,8 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.broadworks.mcp.auth.store.SerializationFilters;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.session.MapSession;
@@ -172,8 +174,9 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
     @SuppressWarnings("unchecked")
     private static Map<String, Object> deserialize(byte[] data) {
         try (ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(data))) {
+            in.setObjectInputFilter(SerializationFilters.HTTP_SESSION_FILTER);
             return (Map<String, Object>) in.readObject();
-        } catch (IOException | ClassNotFoundException | ClassCastException ex) {
+        } catch (IOException | ClassNotFoundException | RuntimeException ex) {
             log.warn("Discarding unreadable HTTP session attributes ({}): {}",
                     ex.getClass().getSimpleName(), ex.getMessage());
             return null;

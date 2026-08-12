@@ -1,10 +1,14 @@
 package com.broadworks.mcp.auth.store.inmemory;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import com.broadworks.mcp.auth.store.AlpacaResource;
+import com.broadworks.mcp.auth.store.EncryptionContext;
 import com.broadworks.mcp.auth.store.EncryptionService;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -12,18 +16,48 @@ import org.junit.jupiter.api.Test;
 
 class InMemoryResourceStoreTest {
 
-    /** Reversible fake encryption used to prove the store persists ciphertext, not plaintext. */
+    /**
+     * Reversible fake encryption used to prove the store persists ciphertext, not plaintext.
+     *
+     * <p>The encryption context is folded into the ciphertext so a mismatched context fails on
+     * decrypt, mirroring the KMS behaviour.</p>
+     */
     private static final class ReversibleEncryption implements EncryptionService {
         static final String PREFIX = "enc:";
 
         @Override
-        public String encrypt(String plaintext) {
-            return plaintext == null ? null : PREFIX + plaintext;
+        public String encrypt(String plaintext, Map<String, String> context) {
+            return plaintext == null ? null : PREFIX + tag(context) + ":" + plaintext;
         }
 
         @Override
-        public String decrypt(String ciphertext) {
-            return ciphertext == null ? null : ciphertext.substring(PREFIX.length());
+        public String decrypt(String ciphertext, Map<String, String> context) {
+            if (ciphertext == null) {
+                return null;
+            }
+            final String expected = PREFIX + tag(context) + ":";
+            if (!ciphertext.startsWith(expected)) {
+                throw new IllegalStateException("encryption context mismatch");
+            }
+            return ciphertext.substring(expected.length());
+        }
+
+        @Override
+        public byte[] encryptBytes(byte[] plaintext, Map<String, String> context) {
+            return plaintext == null ? null
+                    : encrypt(new String(plaintext, StandardCharsets.UTF_8), context)
+                            .getBytes(StandardCharsets.UTF_8);
+        }
+
+        @Override
+        public byte[] decryptBytes(byte[] ciphertext, Map<String, String> context) {
+            return ciphertext == null ? null
+                    : decrypt(new String(ciphertext, StandardCharsets.UTF_8), context)
+                            .getBytes(StandardCharsets.UTF_8);
+        }
+
+        private static String tag(Map<String, String> context) {
+            return Integer.toHexString(EncryptionContext.canonical(context).hashCode());
         }
     }
 
@@ -90,10 +124,22 @@ class InMemoryResourceStoreTest {
         final String plaintext = "top-secret";
         store.put("sub-a", resource("res-1", plaintext));
 
-        final String ciphertext = encryption.encrypt(plaintext);
+        final String ciphertext = encryption.encrypt(plaintext,
+                EncryptionContext.forResource("in-memory", "sub-a", "res-1"));
         assertThat(ciphertext).isNotEqualTo(plaintext).startsWith(ReversibleEncryption.PREFIX);
         // And the store still returns the decrypted value to callers.
         assertThat(store.get("sub-a", "res-1").orElseThrow().password()).isEqualTo(plaintext);
+    }
+
+    @Test
+    void ciphertextIsBoundToItsOwningSubject() {
+        // A secret encrypted for one subject must not be decryptable under another subject's context.
+        final String ciphertext = encryption.encrypt("top-secret",
+                EncryptionContext.forResource("in-memory", "sub-a", "res-1"));
+
+        assertThatThrownBy(() -> encryption.decrypt(ciphertext,
+                EncryptionContext.forResource("in-memory", "sub-b", "res-1")))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
