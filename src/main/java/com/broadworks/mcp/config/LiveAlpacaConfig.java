@@ -19,6 +19,9 @@ import co.ecg.alpaca.toolkit.messaging.request.RequestBundle;
 import co.ecg.alpaca.toolkit.messaging.request.RequestBundler;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import co.ecg.alpaca.toolkit.service.HostIdCachingService;
+import co.ecg.alpaca.toolkit.service.LicenseService;
+import co.ecg.alpaca.toolkit.service.SpringApplicationService;
+import co.ecg.licensing.ECGLicense;
 import org.apache.jcs.JCS;
 import org.apache.jcs.access.exception.CacheException;
 import org.springframework.beans.factory.ObjectProvider;
@@ -46,6 +49,14 @@ import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
  * <p>The response cache uses JCS defaults; a deployment can supply a tuned {@code cache.ccf} on the
  * classpath (or via {@code -Dalpaca.cache.config=/path/to/cache.ccf}) and it will be picked up
  * automatically.</p>
+ *
+ * <p>Parts of the toolkit do not receive their collaborators by injection but reach back into Spring
+ * through the static {@link SpringApplicationService} holder, so it must be a bean here too: its
+ * {@code ApplicationContextAware} callback is what populates that holder. Without it the first such
+ * lookup fails with {@code Cannot invoke "ApplicationContext.getBean(Class)" because
+ * "SpringApplicationService.CONTEXT" is null} — in practice right after a successful login, when
+ * {@code ResponseBundleHandler} (constructed for every response bundle) resolves
+ * {@link LibraryProperties} that way, surfacing as "BroadWorks Server Creation Error!".</p>
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "broadworks.alpaca", name = "live", havingValue = "true",
@@ -58,7 +69,8 @@ import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
         RequestBundler.class,
         RequestBundle.class,
         MessageDigestUtils.class,
-        HostIdCachingService.class
+        HostIdCachingService.class,
+        SpringApplicationService.class
 })
 public class LiveAlpacaConfig {
 
@@ -94,6 +106,18 @@ public class LiveAlpacaConfig {
         // Use a fixed region name backed by the default config in cache.ccf to avoid
         // "props is null" when JCS tries to load properties for a random/undefined region name.
         return JCS.getInstance("alpacaResponseCache");
+    }
+
+    /**
+     * License lookup for the toolkit's static {@code LegacyLicenseService}. With the application
+     * context now available it resolves this bean instead of going straight to the licensing runtime;
+     * were it missing, every call would log "Failed to get LicenseService bean" before falling back to
+     * exactly what this bean returns — the shared {@link ECGLicense} singleton seeded from
+     * {@code broadworks.alpaca.license-key} by the connection factory.
+     */
+    @Bean
+    public LicenseService alpacaLicenseService() {
+        return ECGLicense::getLicense;
     }
 
     @Bean

@@ -231,6 +231,26 @@ curl -sv telnet://216.128.192.41:2208 --max-time 5   # reachability, bypassing D
 If the lookup fails inside the task but succeeds from a public resolver (`dig @1.1.1.1
 portal.vwave.net`), the VPC resolver is the problem, not the app or the security groups.
 
+### `SpringApplicationService.CONTEXT is null` right after a successful login
+
+```
+BroadWorks Server Creation Error!. Failed to connect to portal.vwave.net - Cannot invoke
+"org.springframework.context.ApplicationContext.getBean(java.lang.Class)" because
+"co.ecg.alpaca.toolkit.service.SpringApplicationService.CONTEXT" is null
+```
+
+The OCI login itself succeeded (`BroadWorksServer login complete and successful!`); the failure comes
+right after, on the first response bundle. Parts of the Alpaca toolkit do not get their collaborators
+injected but read them from the static holder `SpringApplicationService`, which is populated by that
+class's own `ApplicationContextAware` callback — so it has to be a bean. `LiveAlpacaConfig` registers
+it (together with a `LicenseService` bean, otherwise every license check logs *Failed to get
+LicenseService bean* before falling back to the same `ECGLicense` singleton).
+
+If a future toolkit upgrade reintroduces this, look for the class the holder is asked for: today it is
+`LibraryProperties` (`ResponseBundleHandler`), `LicenseService` (`LegacyLicenseService`), the named
+executors (`ProcessContext`) and `EncryptionService` (`Echo`, only for requests with "ignore" flags) —
+each must be resolvable from this context.
+
 ---
 
 ## End-to-end auth flow
