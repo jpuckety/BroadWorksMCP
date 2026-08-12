@@ -252,9 +252,9 @@ SecureString-backed secrets injected as container env.
    aws ssm put-parameter --name /broadworks-mcp/alpaca-license-key   --type SecureString --value "<license>"
    ```
 
-   Or, if you already keep `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
-   `ALPACA_LICENSE_KEY` in `.env`, push them straight into SSM (SecureString,
-   overwriting any existing values):
+   Or push from local files: Google OAuth from `.env` (`GOOGLE_CLIENT_ID` /
+   `GOOGLE_CLIENT_SECRET`) and the Alpaca license from repo-root
+   `alpaca-license.txt` (multi-line OK; git-ignored):
 
    ```bash
    ./run.sh push-secrets

@@ -55,6 +55,10 @@ SSM_GOOGLE_CLIENT_ID_PARAM="${SSM_GOOGLE_CLIENT_ID_PARAM:-/broadworks-mcp/google
 SSM_GOOGLE_CLIENT_SECRET_PARAM="${SSM_GOOGLE_CLIENT_SECRET_PARAM:-/broadworks-mcp/google-client-secret}"
 SSM_ALPACA_LICENSE_KEY_PARAM="${SSM_ALPACA_LICENSE_KEY_PARAM:-/broadworks-mcp/alpaca-license-key}"
 
+# Local Alpaca license file used by push-secrets (git-ignored). Override path with
+# ALPACA_LICENSE_FILE=... if needed.
+ALPACA_LICENSE_FILE="${ALPACA_LICENSE_FILE:-${PROJECT_ROOT}/alpaca-license.txt}"
+
 # Optional ACM certificate ARN for the HTTPS ALB listener. May also be passed
 # on the command line (see `deploy`). Falls back to the env var the CDK app
 # already understands.
@@ -288,24 +292,39 @@ put_secure_param() {
   log "Pushed ${name}"
 }
 
-# Push Google OAuth + Alpaca license secrets from .env into SSM as SecureString
-# parameters so the deployed ECS task (which reads them via ecs.Secret.fromSsmParameter)
-# picks them up. Values are sourced from GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET /
-# ALPACA_LICENSE_KEY, which load_dotenv has already read from .env (env/inline
-# values take precedence).
+# Load the Alpaca license from ALPACA_LICENSE_FILE (default: repo-root alpaca-license.txt).
+# Supports multi-line file content (unlike .env KEY=VALUE). Trims a single trailing newline.
+load_alpaca_license_from_file() {
+  local file="${ALPACA_LICENSE_FILE}"
+  [[ -f "${file}" ]] || die "Alpaca license file not found: ${file#${PROJECT_ROOT}/} (set ALPACA_LICENSE_FILE=... to override)."
+  local value
+  # Preserve internal newlines; strip one trailing newline from the file if present.
+  value="$(cat "${file}")"
+  value="${value%$'\n'}"
+  [[ -n "${value}" ]] || die "Alpaca license file is empty: ${file#${PROJECT_ROOT}/}"
+  printf '%s' "${value}"
+}
+
+# Push Google OAuth secrets from .env and the Alpaca license from alpaca-license.txt into
+# SSM as SecureString parameters so the deployed ECS task (ecs.Secret.fromSsmParameter)
+# picks them up. GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET come from .env (or the environment);
+# ALPACA_LICENSE_KEY for the push is read from ALPACA_LICENSE_FILE (default alpaca-license.txt).
 cmd_push_secrets() {
   require aws
   local missing=()
   [[ -n "${GOOGLE_CLIENT_ID:-}" ]]     || missing+=(GOOGLE_CLIENT_ID)
   [[ -n "${GOOGLE_CLIENT_SECRET:-}" ]] || missing+=(GOOGLE_CLIENT_SECRET)
-  [[ -n "${ALPACA_LICENSE_KEY:-}" ]]   || missing+=(ALPACA_LICENSE_KEY)
   if [[ ${#missing[@]} -gt 0 ]]; then
     die "Missing required value(s): ${missing[*]}. Set them in ${ENV_FILE#${PROJECT_ROOT}/} (or the environment) before pushing."
   fi
-  log "Pushing secrets from ${ENV_FILE#${PROJECT_ROOT}/} into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
+  local alpaca_license
+  alpaca_license="$(load_alpaca_license_from_file)"
+  log "Pushing secrets into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
+  log "  Google OAuth from ${ENV_FILE#${PROJECT_ROOT}/} (or environment)"
+  log "  Alpaca license from ${ALPACA_LICENSE_FILE#${PROJECT_ROOT}/}"
   put_secure_param "${SSM_GOOGLE_CLIENT_ID_PARAM}"     "${GOOGLE_CLIENT_ID}"
   put_secure_param "${SSM_GOOGLE_CLIENT_SECRET_PARAM}" "${GOOGLE_CLIENT_SECRET}"
-  put_secure_param "${SSM_ALPACA_LICENSE_KEY_PARAM}"   "${ALPACA_LICENSE_KEY}"
+  put_secure_param "${SSM_ALPACA_LICENSE_KEY_PARAM}"   "${alpaca_license}"
   log "Done. Deploy (or restart the service) so the task picks up the new values."
 }
 
@@ -399,9 +418,9 @@ Container:
                    (ECR_REPOSITORY/ECR_REPOSITORY_URI, IMAGE_TAG, ECS_CLUSTER, ECS_SERVICE).
 
 Secrets (AWS SSM):
-  push-secrets     Push Google OAuth + Alpaca license secrets from .env
-                   (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ALPACA_LICENSE_KEY)
-                   into SSM as SecureString parameters.
+  push-secrets     Push Google OAuth secrets from .env (GOOGLE_CLIENT_ID,
+                   GOOGLE_CLIENT_SECRET) and the Alpaca license from
+                   alpaca-license.txt into SSM as SecureString parameters.
 
 Deploy (AWS CDK):
   cdk-install      Install CDK Node dependencies (cdk/).
@@ -428,6 +447,9 @@ Environment overrides:
                     SSM parameter names for push-secrets (defaults
                     /broadworks-mcp/google-client-id, .../google-client-secret,
                     and .../alpaca-license-key).
+  ALPACA_LICENSE_FILE
+                    Path to the Alpaca license file read by push-secrets
+                    (default: <repo>/alpaca-license.txt).
   PUBLIC_HOSTNAME   Public DNS hostname; the base URL is built as https://<hostname>
                     (unset locally -> http://localhost:8080).
   STORAGE_BACKEND, ...  Passed through to the local `run` command.

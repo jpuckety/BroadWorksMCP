@@ -91,7 +91,9 @@ public class LiveAlpacaConfig {
     @Bean
     @Scope("prototype")
     public JCS jcsResponseCache() throws CacheException {
-        return JCS.getInstance(UUID.randomUUID().toString());
+        // Use a fixed region name backed by the default config in cache.ccf to avoid
+        // "props is null" when JCS tries to load properties for a random/undefined region name.
+        return JCS.getInstance("alpacaResponseCache");
     }
 
     @Bean
