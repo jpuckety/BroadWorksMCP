@@ -31,8 +31,8 @@
           LOG_LEVEL_MCP_ENDPOINTS=DEBUG for the MCP access log, or LOG_LEVEL_MCP=DEBUG / TRACE for the
           Spring AI + MCP SDK protocol internals. See README "Logging & troubleshooting".
         -->
-        <logger name="com.broadworks.mcp" level="${LOG_LEVEL_APP:-DEBUG}"/>
-        <logger name="com.broadworks.mcp.web" level="${LOG_LEVEL_MCP_ENDPOINTS:-DEBUG}"/>
+        <logger name="co.pitayagroup.mcp.broadworks" level="${LOG_LEVEL_APP:-DEBUG}"/>
+        <logger name="co.pitayagroup.mcp.broadworks.web" level="${LOG_LEVEL_MCP_ENDPOINTS:-DEBUG}"/>
         <logger name="org.springframework.ai.mcp" level="${LOG_LEVEL_MCP:-INFO}"/>
         <logger name="io.modelcontextprotocol" level="${LOG_LEVEL_MCP:-INFO}"/>
         <logger name="org.springframework.security" level="${LOG_LEVEL_SECURITY:-INFO}"/>

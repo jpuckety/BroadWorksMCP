@@ -151,8 +151,8 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `ALPACA_LIVE` | `true` | Live BroadWorks OCI login via `LiveAlpacaConnectionFactory`. Default on for runtime; set `false` only for tests (the test suite sets this automatically). |
 | `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). In ECS, supplied from SSM `/broadworks-mcp/alpaca-license-key`. |
 | `LOG_LEVEL_ROOT` | `INFO` | Root log level (HTTP profile). |
-| `LOG_LEVEL_APP` | `DEBUG` | Level for the application package `com.broadworks.mcp`. |
-| `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP **and** OAuth endpoint access logs (`com.broadworks.mcp.web`: `McpEndpointLoggingFilter`, `OAuthEndpointLoggingFilter`). |
+| `LOG_LEVEL_APP` | `DEBUG` | Level for the application package `co.pitayagroup.mcp.broadworks`. |
+| `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP **and** OAuth endpoint access logs (`co.pitayagroup.mcp.broadworks.web`: `McpEndpointLoggingFilter`, `OAuthEndpointLoggingFilter`). |
 | `LOG_LEVEL_MCP` | `INFO` | Level for the Spring AI MCP + MCP SDK protocol internals (`org.springframework.ai.mcp`, `io.modelcontextprotocol`). Set to `DEBUG`/`TRACE` to see the raw protocol handshake. |
 | `LOG_LEVEL_SECURITY` | `INFO` | Level for `org.springframework.security` (raise to `DEBUG` to trace the OAuth/Resource-Server filter chain). |
 
