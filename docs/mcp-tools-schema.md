@@ -39,6 +39,8 @@ accepted by, returned from, or logged by any tool.
 | [`broadworks_get_service_provider`](#broadworks_get_service_provider) | Get a single service provider by id. | `ServiceProviderDetail` |
 | [`broadworks_list_groups`](#broadworks_list_groups) | List / search groups (per service provider or system-wide). | `Page` |
 | [`broadworks_get_group`](#broadworks_get_group) | Get a single group by id. | `GroupDetail` |
+| [`broadworks_list_users`](#broadworks_list_users) | List / search users (per group, service provider, or system-wide). | `Page` |
+| [`broadworks_get_user`](#broadworks_get_user) | Get a single user by id. | `UserDetail` |
 
 ---
 
@@ -172,6 +174,60 @@ Get details for a single BroadWorks group within a service provider.
 
 ---
 
+## User tools
+
+### `broadworks_list_users`
+
+List (or search) BroadWorks users. The listing scope is derived from the supplied ids: when both a
+service provider id and a group id are given the search is scoped to that group; when only a service
+provider id is given it spans that service provider; when neither is given it spans the entire
+system. Supplying a group id without a service provider id is rejected. Each supplied search field is
+combined as an AND criterion using the shared `searchMode`; omit all to list everything in scope.
+Results are paginated and capped server-side.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | optional | The service provider id to scope the listing to. Omit (together with `groupId`) to search users across the entire system. |
+| `groupId` | `string` | optional | The group id to scope the listing to. Requires `serviceProviderId` to also be supplied. Omit to search across the whole service provider or system. |
+| `lastName` | `string` | optional | Filter matched against the user's last name. |
+| `firstName` | `string` | optional | Filter matched against the user's first name. |
+| `userId` | `string` | optional | Filter matched against the user id. |
+| `phoneNumber` | `string` | optional | Filter matched against the user's phone number. |
+| `emailAddress` | `string` | optional | Filter matched against the user's email address. |
+| `searchMode` | `string` | optional | How the search values are matched: `STARTSWITH`, `CONTAINS`, or `EQUALTO` (default `CONTAINS`). Applies to all supplied search fields. |
+| `cursor` | `string` | optional | Opaque pagination cursor returned as `next_cursor` by a previous call; omit to start from the first page. |
+| `limit` | `integer` | optional | Maximum rows to return in this page. Clamped to the server ceiling of `50`; defaults to `25` when omitted. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`Page`](#the-page-envelope) whose rows follow the schema
+`["userId", "groupId", "serviceProviderId", "lastName", "firstName", "phoneNumber", "extension", "emailAddress"]`:
+
+| Column | Type | Description |
+|---|---|---|
+| `userId` | `string` | The (system-unique) user id. |
+| `groupId` | `string` | The owning group id (from the row when present, otherwise the request parameter). |
+| `serviceProviderId` | `string` | The owning service provider id (from the row when present, otherwise the request parameter). |
+| `lastName` | `string` | The user's last name, if any. |
+| `firstName` | `string` | The user's first name, if any. |
+| `phoneNumber` | `string` | The user's phone number, if any. |
+| `extension` | `string` | The user's extension, if any. |
+| `emailAddress` | `string` | The user's email address, if any. |
+
+---
+
+### `broadworks_get_user`
+
+Get details for a single BroadWorks user by their (system-unique) user id.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | required | The (system-unique) user id. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`UserDetail`](#userdetail) object.
+
+---
+
 ## Return schemas
 
 ### `ConnectionSummary`
@@ -206,6 +262,28 @@ omitted).
 | `groupName` | `string` | The group display name. |
 | `serviceProviderId` | `string` | The owning service provider id. |
 | `defaultDomain` | `string` | The group's default domain. |
+
+### `UserDetail`
+
+| Field | Type | Description |
+|---|---|---|
+| `userId` | `string` | The (system-unique) user id. |
+| `groupId` | `string` | The owning group id. |
+| `serviceProviderId` | `string` | The owning service provider id. |
+| `firstName` | `string` | The user's first name, if any. |
+| `lastName` | `string` | The user's last name, if any. |
+| `phoneNumber` | `string` | The user's phone number, if any. |
+| `extension` | `string` | The user's extension, if any. |
+| `emailAddress` | `string` | The user's email address, if any. |
+| `department` | `string` | The user's department full path, if any. |
+| `title` | `string` | The user's title, if any. |
+| `mobilePhoneNumber` | `string` | The user's mobile phone number, if any. |
+| `timeZone` | `string` | The user's time zone, if any. |
+| `language` | `string` | The user's language, if any. |
+| `callingLineIdFirstName` | `string` | The user's calling line id first name, if any. |
+| `callingLineIdLastName` | `string` | The user's calling line id last name, if any. |
+| `callingLineIdPhoneNumber` | `string` | The user's calling line id phone number, if any. |
+| `address` | `object` | The physical (street) address, or `null` when absent. |
 
 ### The `Page` envelope
 

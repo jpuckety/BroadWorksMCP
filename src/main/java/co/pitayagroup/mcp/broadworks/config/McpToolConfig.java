@@ -3,6 +3,7 @@ package co.pitayagroup.mcp.broadworks.config;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools;
+import co.pitayagroup.mcp.broadworks.mcp.tools.UserTools;
 
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
@@ -22,9 +23,10 @@ public class McpToolConfig {
     @Bean
     public ToolCallbackProvider broadWorksToolCallbackProvider(ConnectionTools connectionTools,
                                                                ServiceProviderTools serviceProviderTools,
-                                                               GroupTools groupTools) {
+                                                               GroupTools groupTools,
+                                                               UserTools userTools) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(connectionTools, serviceProviderTools, groupTools)
+                .toolObjects(connectionTools, serviceProviderTools, groupTools, userTools)
                 .build();
     }
 }

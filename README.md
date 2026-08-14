@@ -319,6 +319,8 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_get_service_provider` | Get a service provider by id. |
 | `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
+| `broadworks_list_users` | List (or search) users within a group, service provider, or system-wide. |
+| `broadworks_get_user` | Get a user by their (system-unique) user id. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
 `AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set

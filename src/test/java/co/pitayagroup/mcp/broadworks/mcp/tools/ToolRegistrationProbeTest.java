@@ -17,7 +17,8 @@ class ToolRegistrationProbeTest {
     @Test
     void allBroadWorksToolsAreDiscovered() {
         MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null), new GroupTools(null))
+                .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null), new GroupTools(null),
+                        new UserTools(null))
                 .build();
 
         String[] names = Arrays.stream(provider.getToolCallbacks())
@@ -32,6 +33,8 @@ class ToolRegistrationProbeTest {
                 "broadworks_list_service_providers",
                 "broadworks_get_service_provider",
                 "broadworks_list_groups",
-                "broadworks_get_group");
+                "broadworks_get_group",
+                "broadworks_list_users",
+                "broadworks_get_user");
     }
 }
