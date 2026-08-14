@@ -8,6 +8,7 @@ import co.pitayagroup.mcp.broadworks.config.OidcProperties;
 import co.pitayagroup.mcp.broadworks.config.PublicBaseUrlProperties;
 import co.pitayagroup.mcp.broadworks.config.RedirectAllowlistProperties;
 import co.pitayagroup.mcp.broadworks.config.StorageProperties;
+import co.pitayagroup.mcp.broadworks.mcp.McpToolsListDumper;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -41,6 +42,13 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 public class BroadWorksMcpApplication {
 
     public static void main(String[] args) {
+        // Offline utility mode: print the MCP tools/list response and exit without booting the server.
+        // Used by `./run.sh deploy` to surface the deployed server's tool catalogue on standard out.
+        if (args != null && args.length > 0 && McpToolsListDumper.DUMP_TOOLS_FLAG.equals(args[0])) {
+            final String serverUrl = args.length > 1 ? args[1] : null;
+            System.out.println(McpToolsListDumper.toolsListJson(serverUrl));
+            return;
+        }
         SpringApplication.run(BroadWorksMcpApplication.class, args);
     }
 }

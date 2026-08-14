@@ -160,6 +160,55 @@ resolve_jar() {
   printf '%s\n' "${jar}"
 }
 
+# Resolve the repackaged Spring Boot jar, building it first if it is missing. Progress logs go to
+# stderr so callers can capture the jar path (the sole stdout line) cleanly.
+resolve_or_build_jar() {
+  local jar
+  jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
+  if [[ -z "${jar}" ]]; then
+    log "No runnable jar found in target/ — building it to render the MCP tools/list..." >&2
+    cmd_build 1>&2
+    jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
+    [[ -n "${jar}" ]] || die "Build did not produce a runnable jar in target/."
+  fi
+  printf '%s\n' "${jar}"
+}
+
+# Derive the deployed MCP endpoint URL (…/mcp) from the CDK stack outputs written by `cdk deploy
+# --outputs-file`. Prefers the Route 53 PublicUrl; otherwise builds it from the ALB DNS name, using
+# https when a certificate is configured (the ALB then listens on TLS) and http otherwise.
+mcp_url_from_outputs() {
+  local outputs_file="$1"
+  [[ -f "${outputs_file}" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local public_url lb_dns
+  public_url="$(jq -r '.BroadWorksMcpStack.PublicUrl // empty' "${outputs_file}" 2>/dev/null || true)"
+  lb_dns="$(jq -r '.BroadWorksMcpStack.LoadBalancerDns // empty' "${outputs_file}" 2>/dev/null || true)"
+  if [[ -n "${public_url}" ]]; then
+    printf '%s/mcp\n' "${public_url%/}"
+  elif [[ -n "${lb_dns}" ]]; then
+    if [[ -n "${CERTIFICATE_ARN}" ]]; then
+      printf 'https://%s/mcp\n' "${lb_dns}"
+    else
+      printf 'http://%s/mcp\n' "${lb_dns}"
+    fi
+  fi
+}
+
+# Print an MCP-compliant `tools/list` JSON-RPC response for the just-deployed server to standard out.
+# The tool catalogue is rendered offline from the application's own tool registry (no live call, no
+# auth); the endpoint URL is taken from the CDK stack outputs. The JSON itself is written to stdout;
+# human-readable framing goes to stderr so the response stays cleanly parseable.
+emit_mcp_registration() {
+  require java
+  local outputs_file="$1"
+  local mcp_url jar
+  mcp_url="$(mcp_url_from_outputs "${outputs_file}")"
+  jar="$(resolve_or_build_jar)"
+  warn "MCP registration (tools/list) for the deployed BroadWorks MCP server${mcp_url:+ at ${mcp_url}}:"
+  ALPACA_LIVE=false java -jar "${jar}" --dump-tools "${mcp_url:-}"
+}
+
 # --------------------------------------------------------------------------
 # Build / test actions
 # --------------------------------------------------------------------------
@@ -397,7 +446,14 @@ cmd_deploy() {
   fi
   log "Deploying the BroadWorksMcpStack (builds the Docker image as a CDK asset)..."
   local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
-  cdk_run deploy "${args[@]+"${args[@]}"}" "$@"
+  # Capture the stack outputs (ALB DNS / public URL) so the deployed MCP endpoint can be surfaced
+  # alongside its tool catalogue once the deployment succeeds.
+  local outputs_file; outputs_file="$(mktemp -t bwmcp-cdk-outputs.XXXXXX)"
+  # shellcheck disable=SC2064
+  trap "rm -f '${outputs_file}'" RETURN
+  cdk_run deploy --outputs-file "${outputs_file}" "${args[@]+"${args[@]}"}" "$@"
+  # Surface an MCP-compliant tools/list registration response for the freshly deployed server.
+  emit_mcp_registration "${outputs_file}"
 }
 
 cmd_undeploy() {
@@ -449,7 +505,9 @@ Deploy (AWS CDK):
   cdk-install      Install CDK Node dependencies (cdk/).
   synth            Synthesize the CloudFormation template.
   bootstrap        Bootstrap the CDK environment (one-time per account/region).
-  deploy [certArn] Deploy the BroadWorksMcpStack (builds the image as a CDK asset).
+  deploy [certArn] Deploy the BroadWorksMcpStack (builds the image as a CDK asset), then print an
+                   MCP-compliant tools/list registration response (rendered offline; no auth) for
+                   the deployed endpoint on standard out.
   undeploy         Destroy the BroadWorksMcpStack.
 
 Environment overrides:
