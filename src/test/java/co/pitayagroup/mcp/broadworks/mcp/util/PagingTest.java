@@ -1,4 +1,4 @@
-package co.pitayagroup.mcp.broadworks.mcp.tools;
+package co.pitayagroup.mcp.broadworks.mcp.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.model.Page;
 
 import org.junit.jupiter.api.Test;
 

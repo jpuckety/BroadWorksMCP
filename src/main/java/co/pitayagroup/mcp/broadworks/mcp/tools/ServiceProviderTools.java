@@ -7,13 +7,16 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.model.Page;
+import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderDetail;
+import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderSummary;
+import co.pitayagroup.mcp.broadworks.mcp.util.AlpacaRequests;
+import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaServiceProviderName;
-import co.ecg.alpaca.toolkit.generated.enums.SearchMode;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
-import co.ecg.alpaca.toolkit.messaging.response.Response;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,10 +79,10 @@ public class ServiceProviderTools {
                     new ServiceProvider.ServiceProviderGetListRequest(server);
             if (search != null && !search.isBlank()) {
                 request.setSearchCriteriaServiceProviderName(
-                        new SearchCriteriaServiceProviderName(searchMode(searchMode), search.trim(), true));
+                        new SearchCriteriaServiceProviderName(AlpacaRequests.searchMode(searchMode), search.trim(), true));
             }
             final ServiceProvider.ServiceProviderGetListResponse response = request.fire();
-            ensureSuccess(response, "list service providers");
+            AlpacaRequests.ensureSuccess(response, "list service providers");
             final List<ServiceProviderServiceProviderTableRow> serviceProviderTable = response.getServiceProviderTable();
             final List<ServiceProviderSummary> summaries =
                     (serviceProviderTable == null ? List.<ServiceProviderServiceProviderTableRow>of() : serviceProviderTable)
@@ -148,30 +151,5 @@ public class ServiceProviderTools {
         final UserInfo user = UserContext.current()
                 .orElseThrow(() -> new AlpacaException("No authenticated user in context"));
         return connectionFactory.connect(user.subject(), resourceId);
-    }
-
-    static void ensureSuccess(Response response, String action) {
-        if (response.isErrorResponse()) {
-            throw new AlpacaException("BroadWorks failed to " + action
-                    + " (error code " + response.getErrorCode() + ")");
-        }
-    }
-
-    /**
-     * Parses a user-supplied search mode into the Alpaca {@link SearchMode} enum, defaulting to
-     * {@link SearchMode#CONTAINS} when blank. Matching is case-insensitive.
-     *
-     * @throws AlpacaException if {@code mode} is not one of STARTSWITH, CONTAINS, or EQUALTO.
-     */
-    static SearchMode searchMode(String mode) {
-        if (mode == null || mode.isBlank()) {
-            return SearchMode.CONTAINS;
-        }
-        try {
-            return SearchMode.valueOf(mode.trim().toUpperCase(java.util.Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            throw new AlpacaException("Invalid searchMode '" + mode
-                    + "'; expected one of STARTSWITH, CONTAINS, EQUALTO");
-        }
     }
 }

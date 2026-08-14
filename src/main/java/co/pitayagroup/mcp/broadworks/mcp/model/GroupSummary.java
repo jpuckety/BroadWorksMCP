@@ -1,4 +1,4 @@
-package co.pitayagroup.mcp.broadworks.mcp.tools;
+package co.pitayagroup.mcp.broadworks.mcp.model;
 
 /**
  * Summary view of a BroadWorks group as returned by a list operation.

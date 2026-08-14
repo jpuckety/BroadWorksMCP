@@ -14,6 +14,10 @@ import java.util.Map;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
+import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
+import co.pitayagroup.mcp.broadworks.mcp.model.GroupSummary;
+import co.pitayagroup.mcp.broadworks.mcp.model.Page;
+import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.generated.Group;
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;

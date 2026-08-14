@@ -10,6 +10,7 @@ import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
 import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
+import co.pitayagroup.mcp.broadworks.mcp.model.ConnectionSummary;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;

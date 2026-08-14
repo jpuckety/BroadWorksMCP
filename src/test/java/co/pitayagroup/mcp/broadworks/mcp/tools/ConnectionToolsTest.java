@@ -12,6 +12,7 @@ import co.pitayagroup.mcp.broadworks.auth.store.inmemory.InMemoryResourceStore;
 import co.pitayagroup.mcp.broadworks.auth.store.inmemory.NoopEncryptionService;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
+import co.pitayagroup.mcp.broadworks.mcp.model.ConnectionSummary;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

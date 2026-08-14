@@ -1,4 +1,4 @@
-package co.pitayagroup.mcp.broadworks.mcp.tools;
+package co.pitayagroup.mcp.broadworks.mcp.model;
 
 /**
  * Non-secret summary of a configured BroadWorks/Alpaca connection.
@@ -26,7 +26,7 @@ public record ConnectionSummary(
     /**
      * @return a non-secret summary of the given resource (password intentionally dropped).
      */
-    static ConnectionSummary from(co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource resource) {
+    public static ConnectionSummary from(co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource resource) {
         return new ConnectionSummary(
                 resource.resourceId(),
                 resource.displayName(),

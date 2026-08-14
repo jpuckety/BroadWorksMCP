@@ -7,6 +7,11 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
+import co.pitayagroup.mcp.broadworks.mcp.model.GroupSummary;
+import co.pitayagroup.mcp.broadworks.mcp.model.Page;
+import co.pitayagroup.mcp.broadworks.mcp.util.AlpacaRequests;
+import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
 import co.ecg.alpaca.toolkit.generated.Group;
@@ -74,7 +79,7 @@ public class GroupTools {
                         + "limit={}, resourceId={})", serviceProviderId, search, searchMode, cursor, limit, resourceId);
         final int offset = Paging.decodeCursor(cursor);
         final int pageLimit = Paging.effectivePageLimit(limit, GROUP_SCHEMA.size());
-        final SearchMode mode = ServiceProviderTools.searchMode(searchMode);
+        final SearchMode mode = AlpacaRequests.searchMode(searchMode);
         final boolean hasSearch = search != null && !search.isBlank();
         final boolean systemWide = serviceProviderId == null || serviceProviderId.isBlank();
         final BroadWorksServer server = connect(resourceId);
@@ -113,7 +118,7 @@ public class GroupTools {
             request.setSearchCriteriaGroupName(new SearchCriteriaGroupName(mode, search.trim(), true));
         }
         final Group.GroupGetListInServiceProviderResponse response = request.fire();
-        ServiceProviderTools.ensureSuccess(response, "list groups");
+        AlpacaRequests.ensureSuccess(response, "list groups");
         final List<GroupGroupTable1Row> groupTable = response.getGroupTable();
         return (groupTable == null ? List.<GroupGroupTable1Row>of() : groupTable)
                 .stream()
@@ -132,7 +137,7 @@ public class GroupTools {
             request.setSearchCriteriaGroupName(new SearchCriteriaGroupName(mode, search.trim(), true));
         }
         final Group.GroupGetListInSystemResponse response = request.fire();
-        ServiceProviderTools.ensureSuccess(response, "list groups in system");
+        AlpacaRequests.ensureSuccess(response, "list groups in system");
         final List<GroupGroupTable2Row> groupTable = response.getGroupTable();
         return (groupTable == null ? List.<GroupGroupTable2Row>of() : groupTable)
                 .stream()
