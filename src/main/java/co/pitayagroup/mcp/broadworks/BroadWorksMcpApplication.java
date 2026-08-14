@@ -42,11 +42,12 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 public class BroadWorksMcpApplication {
 
     public static void main(String[] args) {
-        // Offline utility mode: print the MCP tools/list response and exit without booting the server.
-        // Used by `./run.sh deploy` to surface the deployed server's tool catalogue on standard out.
+        // Offline utility mode: print the MCP tools/list, resources/list and prompts/list responses
+        // and exit without booting the server. Used by `./run.sh deploy` to surface the deployed
+        // server's capability catalogue on standard out.
         if (args != null && args.length > 0 && McpToolsListDumper.DUMP_TOOLS_FLAG.equals(args[0])) {
             final String serverUrl = args.length > 1 ? args[1] : null;
-            System.out.println(McpToolsListDumper.toolsListJson(serverUrl));
+            System.out.println(McpToolsListDumper.registrationJson(serverUrl));
             return;
         }
         SpringApplication.run(BroadWorksMcpApplication.class, args);

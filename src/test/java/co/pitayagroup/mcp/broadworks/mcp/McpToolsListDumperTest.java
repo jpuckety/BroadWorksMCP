@@ -11,8 +11,9 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Verifies {@link McpToolsListDumper} emits a well-formed, spec-compliant MCP {@code tools/list}
- * JSON-RPC response covering every BroadWorks {@code @Tool}, entirely offline (no server, no auth).
+ * Verifies {@link McpToolsListDumper} emits well-formed, spec-compliant MCP {@code tools/list},
+ * {@code resources/list} and {@code prompts/list} JSON-RPC responses covering every BroadWorks
+ * {@code @Tool}, entirely offline (no server, no auth).
  */
 class McpToolsListDumperTest {
 
@@ -46,6 +47,61 @@ class McpToolsListDumperTest {
                 "broadworks_get_group",
                 "broadworks_list_users",
                 "broadworks_get_user");
+    }
+
+    @Test
+    void rendersEmptyJsonRpcResourcesList() {
+        final JsonNode root = MAPPER.readTree(McpToolsListDumper.resourcesListJson(null));
+
+        assertThat(root.get("jsonrpc").asString()).isEqualTo("2.0");
+        assertThat(root.get("id").asInt()).isEqualTo(2);
+        final JsonNode resources = root.get("result").get("resources");
+        assertThat(resources.isArray()).isTrue();
+        assertThat(resources.isEmpty()).isTrue();
+    }
+
+    @Test
+    void rendersEmptyJsonRpcPromptsList() {
+        final JsonNode root = MAPPER.readTree(McpToolsListDumper.promptsListJson(null));
+
+        assertThat(root.get("jsonrpc").asString()).isEqualTo("2.0");
+        assertThat(root.get("id").asInt()).isEqualTo(3);
+        final JsonNode prompts = root.get("result").get("prompts");
+        assertThat(prompts.isArray()).isTrue();
+        assertThat(prompts.isEmpty()).isTrue();
+    }
+
+    @Test
+    void registrationBatchContainsToolsResourcesAndPrompts() {
+        final JsonNode batch = MAPPER.readTree(McpToolsListDumper.registrationJson(null));
+
+        assertThat(batch.isArray()).isTrue();
+        assertThat(batch.size()).isEqualTo(3);
+
+        // The batch is an ordered JSON-RPC 2.0 batch response: tools (id 1), resources (id 2), prompts (id 3).
+        final JsonNode toolsResponse = batch.get(0);
+        assertThat(toolsResponse.get("id").asInt()).isEqualTo(1);
+        assertThat(toolsResponse.get("result").get("tools").isArray()).isTrue();
+        assertThat(toolsResponse.get("result").get("tools").isEmpty()).isFalse();
+
+        final JsonNode resourcesResponse = batch.get(1);
+        assertThat(resourcesResponse.get("id").asInt()).isEqualTo(2);
+        assertThat(resourcesResponse.get("result").get("resources").isArray()).isTrue();
+
+        final JsonNode promptsResponse = batch.get(2);
+        assertThat(promptsResponse.get("id").asInt()).isEqualTo(3);
+        assertThat(promptsResponse.get("result").get("prompts").isArray()).isTrue();
+    }
+
+    @Test
+    void registrationBatchAdvertisesServerUrlOnEveryResponse() {
+        final JsonNode batch =
+                MAPPER.readTree(McpToolsListDumper.registrationJson(" https://mcp.example.com/mcp "));
+
+        for (JsonNode response : batch) {
+            assertThat(response.get("result").get("_meta").get("serverUrl").asString())
+                    .isEqualTo("https://mcp.example.com/mcp");
+        }
     }
 
     @Test

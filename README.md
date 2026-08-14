@@ -99,11 +99,13 @@ mvn -Pinstall-alpaca clean verify
 > certificate), `./run.sh undeploy`.
 >
 > After a successful `./run.sh deploy`, the script prints an MCP-compliant
-> `tools/list` JSON-RPC registration response for the deployed server on standard
-> out. The tool catalogue is rendered offline from the application's own tool
-> registry (`java -jar … --dump-tools`) — no live call to the server and no
+> JSON-RPC registration response for the deployed server on standard out: a
+> JSON-RPC 2.0 batch containing the `tools/list`, `resources/list` and
+> `prompts/list` responses (the last two are empty — the server exposes tools
+> only). The catalogue is rendered offline from the application's own registry
+> (`java -jar … --dump-tools`) — no live call to the server and no
 > authentication — and the deployed `/mcp` endpoint (taken from the CDK stack
-> outputs) is surfaced under `result._meta.serverUrl`.
+> outputs) is surfaced under each response's `result._meta.serverUrl`.
 
 - Unit tests cover the token factory, both stores, encryption, ID-token verification, and the MCP
   tools.

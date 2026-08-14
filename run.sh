@@ -166,7 +166,7 @@ resolve_or_build_jar() {
   local jar
   jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
   if [[ -z "${jar}" ]]; then
-    log "No runnable jar found in target/ — building it to render the MCP tools/list..." >&2
+    log "No runnable jar found in target/ — building it to render the MCP capability listing..." >&2
     cmd_build 1>&2
     jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
     [[ -n "${jar}" ]] || die "Build did not produce a runnable jar in target/."
@@ -195,17 +195,18 @@ mcp_url_from_outputs() {
   fi
 }
 
-# Print an MCP-compliant `tools/list` JSON-RPC response for the just-deployed server to standard out.
-# The tool catalogue is rendered offline from the application's own tool registry (no live call, no
-# auth); the endpoint URL is taken from the CDK stack outputs. The JSON itself is written to stdout;
-# human-readable framing goes to stderr so the response stays cleanly parseable.
+# Print MCP-compliant `tools/list`, `resources/list` and `prompts/list` JSON-RPC responses (as a
+# JSON-RPC 2.0 batch) for the just-deployed server to standard out. The catalogue is rendered offline
+# from the application's own registry (no live call, no auth); the endpoint URL is taken from the CDK
+# stack outputs. The JSON itself is written to stdout; human-readable framing goes to stderr so the
+# response stays cleanly parseable.
 emit_mcp_registration() {
   require java
   local outputs_file="$1"
   local mcp_url jar
   mcp_url="$(mcp_url_from_outputs "${outputs_file}")"
   jar="$(resolve_or_build_jar)"
-  warn "MCP registration (tools/list) for the deployed BroadWorks MCP server${mcp_url:+ at ${mcp_url}}:"
+  warn "MCP registration (tools/list, resources/list, prompts/list) for the deployed BroadWorks MCP server${mcp_url:+ at ${mcp_url}}:"
   ALPACA_LIVE=false java -jar "${jar}" --dump-tools "${mcp_url:-}"
 }
 
@@ -452,7 +453,7 @@ cmd_deploy() {
   # shellcheck disable=SC2064
   trap "rm -f '${outputs_file}'" RETURN
   cdk_run deploy --outputs-file "${outputs_file}" "${args[@]+"${args[@]}"}" "$@"
-  # Surface an MCP-compliant tools/list registration response for the freshly deployed server.
+  # Surface MCP-compliant tools/list, resources/list and prompts/list responses for the deployment.
   emit_mcp_registration "${outputs_file}"
 }
 
@@ -506,8 +507,8 @@ Deploy (AWS CDK):
   synth            Synthesize the CloudFormation template.
   bootstrap        Bootstrap the CDK environment (one-time per account/region).
   deploy [certArn] Deploy the BroadWorksMcpStack (builds the image as a CDK asset), then print an
-                   MCP-compliant tools/list registration response (rendered offline; no auth) for
-                   the deployed endpoint on standard out.
+                   MCP-compliant tools/list, resources/list and prompts/list registration response
+                   (rendered offline; no auth) for the deployed endpoint on standard out.
   undeploy         Destroy the BroadWorksMcpStack.
 
 Environment overrides:
