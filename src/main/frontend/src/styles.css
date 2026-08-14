@@ -165,6 +165,15 @@ body {
   font-size: 0.9rem;
 }
 
+.success {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+}
+
 .hint {
   color: var(--muted);
   font-size: 0.9rem;

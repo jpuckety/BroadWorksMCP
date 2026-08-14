@@ -72,6 +72,21 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         return server;
     }
 
+    @Override
+    public void verify(AlpacaResource resource) {
+        if (resource == null) {
+            throw new AlpacaException("No BroadWorks connection to verify");
+        }
+        if (resource.password() == null || resource.password().isBlank()) {
+            throw new AlpacaException(NEEDS_PASSWORD_MESSAGE);
+        }
+        applyLicense();
+        // A verification must always exercise a fresh login and must never be served from — or added
+        // to — the per-tenant connection cache: it opens its own connection and closes it immediately.
+        final BroadWorksServer server = login(resource);
+        closeQuietly(server);
+    }
+
     private AlpacaResource resolveResource(String subject, String resourceId) {
         if (resourceId != null && !resourceId.isBlank()) {
             return resourceStore.get(subject, resourceId)
@@ -143,6 +158,21 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         }
         log.info("Loaded Alpaca license from configured key (company={}, validUntil={})",
                 license.getCompany(), license.getValidUntil());
+    }
+
+    /**
+     * Best-effort close of a (possibly half-open) connection, swallowing any failure so the original
+     * outcome is preserved. Shared by the default factory's verification path and the live override.
+     */
+    protected static void closeQuietly(BroadWorksServer server) {
+        if (server == null) {
+            return;
+        }
+        try {
+            server.close();
+        } catch (Exception ignore) {
+            // Best-effort cleanup; the caller's original result/failure is what matters.
+        }
     }
 
     /** A cached connection with the instant it was established. */

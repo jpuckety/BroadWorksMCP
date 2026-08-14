@@ -11,9 +11,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
+import co.pitayagroup.mcp.broadworks.mcp.model.AddressInfo;
+import co.pitayagroup.mcp.broadworks.mcp.model.ContactInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupSummary;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
@@ -21,6 +24,8 @@ import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.generated.Group;
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;
+import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
+import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable1Row;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -180,6 +185,27 @@ class GroupToolsTest {
         when(group.getGroupName()).thenReturn("Support");
         when(group.getServiceProviderId()).thenReturn("sp-1");
         when(group.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(group.getUserCount()).thenReturn(12);
+        when(group.getUserLimit()).thenReturn(50);
+        when(group.getCallingLineIdName()).thenReturn("Support Line");
+        when(group.getCallingLineIdPhoneNumber()).thenReturn("+1-555-0199");
+        when(group.getTimeZone()).thenReturn("America/Chicago");
+        when(group.getLocationDialingCode()).thenReturn("217");
+
+        final Contact contact = mock(Contact.class);
+        when(contact.getContactName()).thenReturn(Optional.of("Jane Doe"));
+        when(contact.getContactNumber()).thenReturn(Optional.of("+1-555-0100"));
+        when(contact.getContactEmail()).thenReturn(Optional.of("jane@sp1.example.com"));
+        when(group.getContact()).thenReturn(contact);
+
+        final StreetAddress address = mock(StreetAddress.class);
+        when(address.getAddressLine1()).thenReturn(Optional.of("1 Main St"));
+        when(address.getAddressLine2()).thenReturn(Optional.of("Suite 200"));
+        when(address.getCity()).thenReturn(Optional.of("Springfield"));
+        when(address.getStateOrProvince()).thenReturn(Optional.of("IL"));
+        when(address.getZipOrPostalCode()).thenReturn(Optional.of("62701"));
+        when(address.getCountry()).thenReturn(Optional.of("US"));
+        when(group.getAddress()).thenReturn(address);
 
         try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
              MockedStatic<Group> groupStatics = mockStatic(Group.class)) {
@@ -188,8 +214,45 @@ class GroupToolsTest {
 
             final GroupDetail detail = tools.getGroup("sp-1", "grp-9", "res-2");
 
-            assertThat(detail).isEqualTo(new GroupDetail("grp-9", "Support", "sp-1", "sp1.example.com"));
+            assertThat(detail).isEqualTo(new GroupDetail(
+                    "grp-9", "Support", "sp-1", "sp1.example.com",
+                    12, 50, "Support Line", "+1-555-0199", "America/Chicago", "217",
+                    new ContactInfo("Jane Doe", "+1-555-0100", "jane@sp1.example.com"),
+                    new AddressInfo("1 Main St", "Suite 200", "Springfield", "IL", "62701", "US")));
             assertThat(spCtor.constructed()).hasSize(1);
+        }
+    }
+
+    @Test
+    void getGroupMapsNullContactAndAddressToNull() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+        when(group.getGroupId()).thenReturn("grp-9");
+        when(group.getGroupName()).thenReturn("Support");
+        when(group.getServiceProviderId()).thenReturn("sp-1");
+        when(group.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(group.getUserCount()).thenReturn(null);
+        when(group.getUserLimit()).thenReturn(null);
+        when(group.getCallingLineIdName()).thenReturn(null);
+        when(group.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(group.getTimeZone()).thenReturn(null);
+        when(group.getLocationDialingCode()).thenReturn(null);
+        when(group.getContact()).thenReturn(null);
+        when(group.getAddress()).thenReturn(null);
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class)) {
+            groupStatics.when(() -> Group.getPopulatedGroup(org.mockito.ArgumentMatchers.any(), eq("grp-9")))
+                    .thenReturn(group);
+
+            final GroupDetail detail = tools.getGroup("sp-1", "grp-9", null);
+
+            assertThat(detail).isEqualTo(new GroupDetail(
+                    "grp-9", "Support", "sp-1", "sp1.example.com",
+                    null, null, null, null, null, null, null, null));
+            assertThat(detail.contact()).isNull();
+            assertThat(detail.address()).isNull();
         }
     }
 }

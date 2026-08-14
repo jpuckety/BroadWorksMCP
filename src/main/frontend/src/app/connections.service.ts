@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ConnectionRequest, ConnectionResponse } from './connection';
+import { ConnectionRequest, ConnectionResponse, VerifyConnectionRequest, VerifyResult } from './connection';
 
 /**
  * Client for the portal's connection API. All calls are same-origin and rely on the browser session
@@ -33,6 +33,10 @@ export class ConnectionsService {
   setPassword(id: string, password: string): Observable<ConnectionResponse> {
     return this.http.put<ConnectionResponse>(
       `${this.base}/${encodeURIComponent(id)}/password`, { password });
+  }
+
+  verify(request: VerifyConnectionRequest): Observable<VerifyResult> {
+    return this.http.post<VerifyResult>(`${this.base}/verify`, request);
   }
 
   delete(id: string): Observable<void> {

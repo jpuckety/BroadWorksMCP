@@ -11,6 +11,7 @@ import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupSummary;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
 import co.pitayagroup.mcp.broadworks.mcp.util.AlpacaRequests;
+import co.pitayagroup.mcp.broadworks.mcp.util.ContactAddressMapper;
 import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
@@ -157,7 +158,9 @@ public class GroupTools {
     }
 
     @Tool(name = "broadworks_get_group",
-            description = "Get details for a single BroadWorks group within a service provider.")
+            description = "Get details for a single BroadWorks group within a service provider, including its "
+                    + "user count/limit, calling line id (name/number), time zone, location dialing code, "
+                    + "contact (name/number/email), and physical address.")
     public GroupDetail getGroup(
             @ToolParam(description = "The service provider id") String serviceProviderId,
             @ToolParam(description = "The group id") String groupId,
@@ -174,7 +177,15 @@ public class GroupTools {
                     group.getGroupId(),
                     group.getGroupName(),
                     group.getServiceProviderId(),
-                    group.getDefaultDomain());
+                    group.getDefaultDomain(),
+                    group.getUserCount(),
+                    group.getUserLimit(),
+                    group.getCallingLineIdName(),
+                    group.getCallingLineIdPhoneNumber(),
+                    group.getTimeZone(),
+                    group.getLocationDialingCode(),
+                    ContactAddressMapper.toContact(group.getContact()),
+                    ContactAddressMapper.toAddress(group.getAddress()));
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_get_group failed for serviceProviderId={} groupId={}: {}",
                     serviceProviderId, groupId, ex.getMessage());

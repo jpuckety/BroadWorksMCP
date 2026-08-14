@@ -1,7 +1,10 @@
 package co.pitayagroup.mcp.broadworks.web.portal;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oidcLogin;
@@ -15,11 +18,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
 import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
+import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
+import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
 
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -45,6 +51,9 @@ class PortalConnectionControllerTest {
 
     @MockitoBean
     private HostAllowlist hostAllowlist;
+
+    @MockitoBean
+    private AlpacaConnectionFactory connectionFactory;
 
     @BeforeEach
     void resetState() {
@@ -211,5 +220,87 @@ class PortalConnectionControllerTest {
                 .andExpect(jsonPath("$.message").value("hostname is not a permitted BroadWorks connection target"));
 
         assertThat(resourceStore.listForUser("sub-1")).isEmpty();
+    }
+
+    @Test
+    void verifyReportsSuccessWhenLoginSucceedsAndNeverEchoesPassword() throws Exception {
+        // The mocked factory logs in without complaint.
+        final String body = "{\"hostname\":\"portal.example.com\",\"port\":2208,"
+                + "\"username\":\"admin\",\"password\":\"s3cret\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(content().string(Matchers.not(Matchers.containsString("s3cret"))));
+
+        final ArgumentCaptor<AlpacaResource> captor = ArgumentCaptor.forClass(AlpacaResource.class);
+        verify(connectionFactory).verify(captor.capture());
+        assertThat(captor.getValue().hostname()).isEqualTo("portal.example.com");
+        assertThat(captor.getValue().password()).isEqualTo("s3cret");
+    }
+
+    @Test
+    void verifyReportsFailureWhenLoginFails() throws Exception {
+        doThrow(new AlpacaException("login rejected")).when(connectionFactory).verify(any());
+        final String body = "{\"hostname\":\"portal.example.com\",\"port\":2208,"
+                + "\"username\":\"admin\",\"password\":\"s3cret\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("login rejected"));
+    }
+
+    @Test
+    void verifyUsesStoredPasswordWhenBlankForOwnedConnection() throws Exception {
+        resourceStore.put("sub-1", resource("mine", "stored-secret"));
+        // The user edits the host but leaves the password blank; the stored secret must be used.
+        final String body = "{\"hostname\":\"moved.example.com\",\"port\":2209,"
+                + "\"username\":\"admin\",\"password\":\"\",\"resourceId\":\"mine\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(content().string(Matchers.not(Matchers.containsString("stored-secret"))));
+
+        final ArgumentCaptor<AlpacaResource> captor = ArgumentCaptor.forClass(AlpacaResource.class);
+        verify(connectionFactory).verify(captor.capture());
+        assertThat(captor.getValue().hostname()).isEqualTo("moved.example.com");
+        assertThat(captor.getValue().password()).isEqualTo("stored-secret");
+    }
+
+    @Test
+    void verifyCannotUseAnotherUsersStoredPassword() throws Exception {
+        resourceStore.put("sub-2", resource("theirs", "their-secret"));
+        final String body = "{\"hostname\":\"portal.example.com\",\"port\":2208,"
+                + "\"username\":\"admin\",\"password\":\"\",\"resourceId\":\"theirs\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void verifySsrfBlockedHostIsRejected() throws Exception {
+        when(hostAllowlist.isAllowed("10.0.0.1")).thenReturn(false);
+        final String body = "{\"hostname\":\"10.0.0.1\",\"port\":2208,"
+                + "\"username\":\"admin\",\"password\":\"s3cret\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("hostname is not a permitted BroadWorks connection target"));
+    }
+
+    @Test
+    void verifyInvalidInputIsRejected() throws Exception {
+        final String blankHost = "{\"hostname\":\"  \",\"port\":2208,\"username\":\"admin\",\"password\":\"s3cret\"}";
+
+        mockMvc.perform(post("/api/portal/connections/verify").with(loginAs("sub-1")).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(blankHost))
+                .andExpect(status().isBadRequest());
     }
 }

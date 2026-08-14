@@ -88,6 +88,26 @@ class CachingAlpacaConnectionFactoryTest {
     }
 
     @Test
+    void verifyRefusesBlankPasswordAndPointsToPortal() {
+        // Verification of a password-less candidate must fail fast before any login, with a
+        // secret-free message that sends the user to the web portal.
+        assertThatThrownBy(() -> factory.verify(passwordlessResource("res-1")))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("no password yet")
+                .hasMessageContaining("web portal");
+    }
+
+    @Test
+    void verifyProceedsPastGuardWhenPasswordIsSet() {
+        // With a password present the blank-password guard does not fire; this non-live base class
+        // then attempts the login and reports that live connectivity is disabled (i.e. it got past
+        // the guard). Verification never touches the resource store, so none is configured here.
+        assertThatThrownBy(() -> factory.verify(resource("res-1")))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Live BroadWorks connectivity is disabled");
+    }
+
+    @Test
     void perTenantIsolationOnResourceLookup() {
         resourceStore.put("sub-1", resource("res-1"));
 

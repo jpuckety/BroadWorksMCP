@@ -11,6 +11,7 @@ import co.pitayagroup.mcp.broadworks.mcp.model.Page;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderSummary;
 import co.pitayagroup.mcp.broadworks.mcp.util.AlpacaRequests;
+import co.pitayagroup.mcp.broadworks.mcp.util.ContactAddressMapper;
 import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
@@ -123,7 +124,8 @@ public class ServiceProviderTools {
     }
 
     @Tool(name = "broadworks_get_service_provider",
-            description = "Get details for a single BroadWorks service provider by id.")
+            description = "Get details for a single BroadWorks service provider by id, including its "
+                    + "support email, contact (name/number/email), and physical address.")
     public ServiceProviderDetail getServiceProvider(
             @ToolParam(description = "The service provider id") String serviceProviderId,
             @ToolParam(required = false,
@@ -139,7 +141,10 @@ public class ServiceProviderTools {
                     sp.getServiceProviderName(),
                     sp.getDefaultDomain(),
                     Boolean.TRUE.equals(sp.getIsEnterprise()),
-                    sp.getResellerId());
+                    sp.getResellerId(),
+                    sp.getSupportEmail(),
+                    ContactAddressMapper.toContact(sp.getContact()),
+                    ContactAddressMapper.toAddress(sp.getAddress()));
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_get_service_provider failed for serviceProviderId={}: {}",
                     serviceProviderId, ex.getMessage());

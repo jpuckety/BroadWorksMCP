@@ -9,12 +9,15 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
 import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
+import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionValidation;
 import co.pitayagroup.mcp.broadworks.web.portal.dto.ConnectionRequest;
 import co.pitayagroup.mcp.broadworks.web.portal.dto.ConnectionResponse;
 import co.pitayagroup.mcp.broadworks.web.portal.dto.PasswordRequest;
+import co.pitayagroup.mcp.broadworks.web.portal.dto.VerifyConnectionRequest;
+import co.pitayagroup.mcp.broadworks.web.portal.dto.VerifyResponse;
 
 import jakarta.validation.Valid;
 
@@ -46,10 +49,14 @@ public class PortalConnectionController {
 
     private final ResourceStore resourceStore;
     private final HostAllowlist hostAllowlist;
+    private final AlpacaConnectionFactory connectionFactory;
 
-    public PortalConnectionController(ResourceStore resourceStore, HostAllowlist hostAllowlist) {
+    public PortalConnectionController(ResourceStore resourceStore,
+                                      HostAllowlist hostAllowlist,
+                                      AlpacaConnectionFactory connectionFactory) {
         this.resourceStore = resourceStore;
         this.hostAllowlist = hostAllowlist;
+        this.connectionFactory = connectionFactory;
     }
 
     @GetMapping
@@ -130,6 +137,61 @@ public class PortalConnectionController {
         resourceStore.put(subject, updated);
         log.info("Portal set password for BroadWorks connection resourceId={}", id);
         return ConnectionResponse.from(updated);
+    }
+
+    /**
+     * Tests whether the supplied connection settings can log in to BroadWorks, without saving them.
+     *
+     * <p>The non-secret fields are validated and SSRF-screened exactly like create/update. The
+     * password used for the login attempt is the one supplied in the request when non-blank; when it
+     * is blank and a {@code resourceId} of a connection owned by the caller is given, that
+     * connection's stored password is used — so a saved connection (or one whose host / port /
+     * username is being edited) can be verified without re-entering its secret. A failed login is
+     * reported as {@code success=false} with a safe message (HTTP 200); only invalid input or an
+     * SSRF-blocked host is rejected with {@code 400}.</p>
+     */
+    @PostMapping("/verify")
+    public VerifyResponse verify(@Valid @RequestBody VerifyConnectionRequest request) {
+        final String subject = currentSubject();
+        ConnectionValidation.validate(hostAllowlist, request.hostname(), request.port(), request.username());
+
+        final String password = resolveVerifyPassword(subject, request);
+        final String resourceId = (request.resourceId() == null || request.resourceId().isBlank())
+                ? "verify" : request.resourceId().trim();
+
+        final AlpacaResource candidate = new AlpacaResource(
+                resourceId,
+                resourceId,
+                request.hostname().trim(),
+                request.port(),
+                request.username(),
+                password);
+        try {
+            connectionFactory.verify(candidate);
+            log.info("Portal verified BroadWorks connection host={} (resourceId={})",
+                    candidate.hostname(), request.resourceId());
+            return VerifyResponse.ok();
+        } catch (AlpacaException ex) {
+            // A failed login is expected user feedback, not a bad request: report it as an
+            // unsuccessful verification carrying the toolkit's secret-free message.
+            log.info("Portal verification failed host={}: {}", candidate.hostname(), ex.getMessage());
+            return VerifyResponse.failure(ex.getMessage());
+        }
+    }
+
+    /**
+     * Resolves the password to use for a verification: the request's own value when supplied,
+     * otherwise the stored secret of the owned connection named by {@code resourceId}, otherwise
+     * blank (which the factory rejects as "needs a password").
+     */
+    private String resolveVerifyPassword(String subject, VerifyConnectionRequest request) {
+        if (request.password() != null && !request.password().isBlank()) {
+            return request.password();
+        }
+        if (request.resourceId() != null && !request.resourceId().isBlank()) {
+            return requireOwned(subject, request.resourceId()).password();
+        }
+        return "";
     }
 
     @DeleteMapping("/{id}")

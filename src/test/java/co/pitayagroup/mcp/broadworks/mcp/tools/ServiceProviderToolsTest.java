@@ -13,16 +13,21 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.model.AddressInfo;
+import co.pitayagroup.mcp.broadworks.mcp.model.ContactInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServiceProviderSummary;
 import co.pitayagroup.mcp.broadworks.mcp.util.Paging;
 
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;
+import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
+import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -146,14 +151,59 @@ class ServiceProviderToolsTest {
         when(sp.getDefaultDomain()).thenReturn("globex.example.com");
         when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
         when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn("support@globex.example.com");
+
+        final Contact contact = mock(Contact.class);
+        when(contact.getContactName()).thenReturn(Optional.of("Jane Doe"));
+        when(contact.getContactNumber()).thenReturn(Optional.of("+1-555-0100"));
+        when(contact.getContactEmail()).thenReturn(Optional.of("jane@globex.example.com"));
+        when(sp.getContact()).thenReturn(contact);
+
+        final StreetAddress address = mock(StreetAddress.class);
+        when(address.getAddressLine1()).thenReturn(Optional.of("1 Main St"));
+        when(address.getAddressLine2()).thenReturn(Optional.of("Suite 200"));
+        when(address.getCity()).thenReturn(Optional.of("Springfield"));
+        when(address.getStateOrProvince()).thenReturn(Optional.of("IL"));
+        when(address.getZipOrPostalCode()).thenReturn(Optional.of("62701"));
+        when(address.getCountry()).thenReturn(Optional.of("US"));
+        when(sp.getAddress()).thenReturn(address);
 
         try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
             statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9"))).thenReturn(sp);
 
             final ServiceProviderDetail detail = tools.getServiceProvider("sp-9", null);
 
-            assertThat(detail).isEqualTo(
-                    new ServiceProviderDetail("sp-9", "Globex", "globex.example.com", false, null));
+            assertThat(detail).isEqualTo(new ServiceProviderDetail(
+                    "sp-9", "Globex", "globex.example.com", false, null,
+                    "support@globex.example.com",
+                    new ContactInfo("Jane Doe", "+1-555-0100", "jane@globex.example.com"),
+                    new AddressInfo("1 Main St", "Suite 200", "Springfield", "IL", "62701", "US")));
+        }
+    }
+
+    @Test
+    void getServiceProviderMapsNullContactAndAddressToNull() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getServiceProviderId()).thenReturn("sp-9");
+        when(sp.getServiceProviderName()).thenReturn("Globex");
+        when(sp.getDefaultDomain()).thenReturn("globex.example.com");
+        when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn(null);
+        when(sp.getContact()).thenReturn(null);
+        when(sp.getAddress()).thenReturn(null);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9"))).thenReturn(sp);
+
+            final ServiceProviderDetail detail = tools.getServiceProvider("sp-9", null);
+
+            assertThat(detail).isEqualTo(new ServiceProviderDetail(
+                    "sp-9", "Globex", "globex.example.com", false, null, null, null, null));
+            assertThat(detail.contact()).isNull();
+            assertThat(detail.address()).isNull();
         }
     }
 

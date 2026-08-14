@@ -1,5 +1,7 @@
 package co.pitayagroup.mcp.broadworks.mcp;
 
+import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
+
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 
 /**
@@ -20,4 +22,16 @@ public interface AlpacaConnectionFactory {
      * @throws AlpacaException if no resource is configured or the connection cannot be established.
      */
     BroadWorksServer connect(String subject, String resourceId);
+
+    /**
+     * Verifies that the given (possibly not-yet-stored) connection can log in to BroadWorks. Performs
+     * a fresh login using the supplied credentials and immediately closes it: the attempt is never
+     * served from — nor added to — the per-tenant connection cache, so it can safely be used to test
+     * candidate settings from the web portal before they are saved.
+     *
+     * @param resource the connection to test; must carry a non-blank password.
+     * @throws AlpacaException with a safe, secret-free message when the connection has no password or
+     *                         the login cannot be established.
+     */
+    void verify(AlpacaResource resource);
 }

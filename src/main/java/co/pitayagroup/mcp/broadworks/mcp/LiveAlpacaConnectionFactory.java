@@ -61,15 +61,4 @@ public class LiveAlpacaConnectionFactory extends CachingAlpacaConnectionFactory 
                     + resource.hostname() + ": " + ex.getMessage(), ex);
         }
     }
-
-    private static void closeQuietly(BroadWorksServer server) {
-        if (server == null) {
-            return;
-        }
-        try {
-            server.close();
-        } catch (Exception ignore) {
-            // Best-effort cleanup of a half-open connection; the original failure is propagated.
-        }
-    }
 }

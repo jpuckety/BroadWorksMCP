@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { ConnectionRequest } from './connection';
+import { ConnectionRequest, VerifyConnectionRequest, VerifyResult } from './connection';
 import { ConnectionsService } from './connections.service';
 
 /**
@@ -21,6 +21,12 @@ import { ConnectionsService } from './connections.service';
 
       @if (error()) {
         <p class="error" role="alert">{{ error() }}</p>
+      }
+
+      @if (verifyResult(); as result) {
+        <p [class.success]="result.success" [class.error]="!result.success" role="status">
+          {{ result.message }}
+        </p>
       }
 
       <form [formGroup]="form" (ngSubmit)="save()" class="form">
@@ -49,6 +55,9 @@ import { ConnectionsService } from './connections.service';
           <button class="btn primary" type="submit" [disabled]="form.invalid || saving()">
             {{ saving() ? 'Saving…' : 'Save' }}
           </button>
+          <button class="btn" type="button" (click)="verify()" [disabled]="!canVerify()">
+            {{ verifying() ? 'Verifying…' : 'Verify' }}
+          </button>
           <a class="btn" routerLink="/">Cancel</a>
         </div>
       </form>
@@ -65,7 +74,9 @@ export class ConnectionFormComponent {
 
   protected readonly editing = signal(this.id != null);
   protected readonly saving = signal(false);
+  protected readonly verifying = signal(false);
   protected readonly error = signal<string | null>(null);
+  protected readonly verifyResult = signal<VerifyResult | null>(null);
 
   protected readonly form = this.fb.nonNullable.group({
     displayName: ['', Validators.required],
@@ -88,6 +99,50 @@ export class ConnectionFormComponent {
         error: () => this.error.set('Failed to load the connection.')
       });
     }
+  }
+
+  /**
+   * Whether the connection can be tested right now: the target fields must be valid and there must be
+   * a credential to try — a password entered in the form, or (when editing) the connection's stored
+   * secret. New connections therefore require a password before the button enables.
+   */
+  protected canVerify(): boolean {
+    if (this.form.invalid || this.verifying()) {
+      return false;
+    }
+    return this.editing() || !!this.form.getRawValue().password;
+  }
+
+  protected verify(): void {
+    if (!this.canVerify()) {
+      return;
+    }
+    this.verifying.set(true);
+    this.error.set(null);
+    this.verifyResult.set(null);
+
+    const value = this.form.getRawValue();
+    const request: VerifyConnectionRequest = {
+      hostname: value.hostname,
+      port: value.port,
+      username: value.username,
+      password: value.password ? value.password : undefined,
+      resourceId: this.id ?? undefined
+    };
+
+    this.service.verify(request).subscribe({
+      next: (result) => {
+        this.verifying.set(false);
+        this.verifyResult.set(result);
+      },
+      error: (err) => {
+        this.verifying.set(false);
+        this.verifyResult.set({
+          success: false,
+          message: err?.error?.message ?? 'Failed to verify the connection.'
+        });
+      }
+    });
   }
 
   protected save(): void {
