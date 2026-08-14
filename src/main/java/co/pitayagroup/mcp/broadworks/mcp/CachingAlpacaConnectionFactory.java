@@ -115,7 +115,6 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         config.setPort(resource.port());
         config.setUsername(resource.username());
         config.setPassword(resource.password());
-        config.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
         return config;
     }
 

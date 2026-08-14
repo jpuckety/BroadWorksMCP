@@ -12,7 +12,6 @@ public record ConnectionResponse(
         String hostname,
         int port,
         String username,
-        boolean usePrivateApplicationServerAddress,
         boolean needsPassword) {
 
     /**
@@ -26,7 +25,6 @@ public record ConnectionResponse(
                 resource.hostname(),
                 resource.port(),
                 resource.username(),
-                resource.usePrivateApplicationServerAddress(),
                 resource.password() == null || resource.password().isBlank());
     }
 }

@@ -46,7 +46,6 @@ public class DynamoDbResourceStore implements ResourceStore {
     private static final String A_PORT = "port";
     private static final String A_USERNAME = "username";
     private static final String A_PASSWORD = "password";
-    private static final String A_USE_PRIVATE_AS = "usePrivateApplicationServerAddress";
 
     private final DynamoDbTable<ResourceItem> table;
     private final String applicationId;
@@ -95,7 +94,6 @@ public class DynamoDbResourceStore implements ResourceStore {
         // Encrypt the secret before persisting, bound to this application/subject/resource.
         item.setPassword(encryptionService.encrypt(resource.password(),
                 EncryptionContext.forResource(applicationId, subject, resource.resourceId())));
-        item.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
         table.putItem(item);
     }
 
@@ -122,8 +120,7 @@ public class DynamoDbResourceStore implements ResourceStore {
                 item.getPort(),
                 item.getUsername(),
                 encryptionService.decrypt(item.getPassword(),
-                        EncryptionContext.forResource(applicationId, subject, resourceId)),
-                item.isUsePrivateApplicationServerAddress()
+                        EncryptionContext.forResource(applicationId, subject, resourceId))
         );
     }
 
@@ -143,7 +140,6 @@ public class DynamoDbResourceStore implements ResourceStore {
         private int port;
         private String username;
         private String password;
-        private boolean usePrivateApplicationServerAddress;
 
         @DynamoDbPartitionKey
         @DynamoDbAttribute(PK)
@@ -217,15 +213,6 @@ public class DynamoDbResourceStore implements ResourceStore {
 
         public void setPassword(String password) {
             this.password = password;
-        }
-
-        @DynamoDbAttribute(A_USE_PRIVATE_AS)
-        public boolean isUsePrivateApplicationServerAddress() {
-            return usePrivateApplicationServerAddress;
-        }
-
-        public void setUsePrivateApplicationServerAddress(boolean usePrivateApplicationServerAddress) {
-            this.usePrivateApplicationServerAddress = usePrivateApplicationServerAddress;
         }
     }
 }

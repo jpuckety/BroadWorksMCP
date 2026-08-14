@@ -17,6 +17,5 @@ public record ConnectionRequest(
         @Min(value = 1, message = "port must be between 1 and 65535")
         @Max(value = 65535, message = "port must be between 1 and 65535") int port,
         @NotBlank(message = "username is required") String username,
-        Boolean usePrivateApplicationServerAddress,
         String password) {
 }

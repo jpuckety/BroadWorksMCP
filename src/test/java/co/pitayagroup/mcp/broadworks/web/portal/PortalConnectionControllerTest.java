@@ -62,7 +62,7 @@ class PortalConnectionControllerTest {
     }
 
     private AlpacaResource resource(String id, String password) {
-        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", password, false);
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", password);
     }
 
     @Test
@@ -74,8 +74,7 @@ class PortalConnectionControllerTest {
     @Test
     void createStoresConnectionWithPasswordButNeverReturnsIt() throws Exception {
         final String body = "{\"displayName\":\"ECG Prod\",\"hostname\":\"portal.example.com\",\"port\":2208,"
-                + "\"username\":\"admin\","
-                + "\"usePrivateApplicationServerAddress\":false,\"password\":\"s3cret\"}";
+                + "\"username\":\"admin\",\"password\":\"s3cret\"}";
 
         mockMvc.perform(post("/api/portal/connections").with(loginAs("sub-1")).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON).content(body))

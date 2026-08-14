@@ -22,11 +22,11 @@ class CachingAlpacaConnectionFactoryTest {
     }
 
     private AlpacaResource resource(String id) {
-        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "pw", false);
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "pw");
     }
 
     private AlpacaResource passwordlessResource(String id) {
-        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "", false);
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "");
     }
 
     @Test

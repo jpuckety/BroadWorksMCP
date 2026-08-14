@@ -40,10 +40,6 @@ import { ConnectionsService } from './connections.service';
           <span>Username</span>
           <input type="text" formControlName="username" autocomplete="off" />
         </label>
-        <label class="checkbox">
-          <input type="checkbox" formControlName="usePrivateApplicationServerAddress" />
-          <span>Use private application server address</span>
-        </label>
         <label>
           <span>Password {{ editing() ? '(leave blank to keep current)' : '(optional — can be set later)' }}</span>
           <input type="password" formControlName="password" autocomplete="new-password" />
@@ -76,7 +72,6 @@ export class ConnectionFormComponent {
     hostname: ['', Validators.required],
     port: [2208, [Validators.required, Validators.min(1), Validators.max(65535)]],
     username: ['', Validators.required],
-    usePrivateApplicationServerAddress: [false],
     password: ['']
   });
 
@@ -88,7 +83,6 @@ export class ConnectionFormComponent {
           hostname: c.hostname,
           port: c.port,
           username: c.username,
-          usePrivateApplicationServerAddress: c.usePrivateApplicationServerAddress,
           password: ''
         }),
         error: () => this.error.set('Failed to load the connection.')
@@ -109,7 +103,6 @@ export class ConnectionFormComponent {
       hostname: value.hostname,
       port: value.port,
       username: value.username,
-      usePrivateApplicationServerAddress: value.usePrivateApplicationServerAddress,
       password: value.password ? value.password : undefined
     };
 

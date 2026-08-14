@@ -38,7 +38,7 @@ class LiveAlpacaConnectionFactoryTest {
     }
 
     private AlpacaResource resource(String id) {
-        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "pw", false);
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "pw");
     }
 
     @Test

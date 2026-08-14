@@ -76,9 +76,6 @@ public class ConnectionTools {
             @ToolParam(description = "BroadWorks OCI port, e.g. 2208") int port,
             @ToolParam(description = "BroadWorks login username") String username,
             @ToolParam(required = false,
-                    description = "Whether to use the private application server address (defaults to false)")
-            Boolean usePrivateApplicationServerAddress,
-            @ToolParam(required = false,
                     description = "Explicit resource id to create/replace; when omitted a stable id is "
                             + "derived from the display name")
             String resourceId) {
@@ -93,7 +90,6 @@ public class ConnectionTools {
         final String effectiveResourceId = resolveResourceId(resourceId, displayName);
         final String effectiveDisplayName = (displayName == null || displayName.isBlank())
                 ? effectiveResourceId : displayName;
-        final boolean privateAddress = Boolean.TRUE.equals(usePrivateApplicationServerAddress);
 
         // No password is collected here: the connection is stored password-less and must be finished
         // in the web portal. The password is left null (not an empty string) so the encryption layer
@@ -105,8 +101,7 @@ public class ConnectionTools {
                 hostname.trim(),
                 port,
                 username,
-                null,
-                privateAddress);
+                null);
         resourceStore.put(subject, resource);
         log.info("Stored BroadWorks connection resourceId={} host={} (no password yet; "
                         + "user must set it in the web portal)",

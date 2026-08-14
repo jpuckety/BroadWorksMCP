@@ -83,8 +83,7 @@ public class PortalConnectionController {
                 request.hostname().trim(),
                 request.port(),
                 request.username(),
-                password,
-                Boolean.TRUE.equals(request.usePrivateApplicationServerAddress()));
+                password);
         resourceStore.put(subject, resource);
         log.info("Portal created BroadWorks connection resourceId={} host={} (needsPassword={})",
                 resourceId, resource.hostname(), password.isBlank());
@@ -110,8 +109,7 @@ public class PortalConnectionController {
                 request.hostname().trim(),
                 request.port(),
                 request.username(),
-                password,
-                Boolean.TRUE.equals(request.usePrivateApplicationServerAddress()));
+                password);
         resourceStore.put(subject, updated);
         log.info("Portal updated BroadWorks connection resourceId={} host={}", id, updated.hostname());
         return ConnectionResponse.from(updated);
@@ -128,8 +126,7 @@ public class PortalConnectionController {
                 existing.hostname(),
                 existing.port(),
                 existing.username(),
-                request.password(),
-                existing.usePrivateApplicationServerAddress());
+                request.password());
         resourceStore.put(subject, updated);
         log.info("Portal set password for BroadWorks connection resourceId={}", id);
         return ConnectionResponse.from(updated);

@@ -72,7 +72,7 @@ class InMemoryResourceStoreTest {
 
     private AlpacaResource resource(String id, String password) {
         return new AlpacaResource(id, "Display " + id, "as.example.com", 2208,
-                "admin", password, false);
+                "admin", password);
     }
 
     @Test
