@@ -392,30 +392,48 @@ export class BroadWorksMcpStack extends cdk.Stack {
     }
 
     // ---- WAF (internet-facing ALB) ----------------------------------------
-    // The two AWS managed rule groups below reject any request that carries a plain `http://` URL
-    // with a bare 403 that never reaches the application (nothing is logged by the app). That is
-    // fatal for OAuth: RFC 8252 native clients (Claude Desktop, MCP Inspector, VS Code, Cursor)
-    // register and authorize with loopback callbacks such as `http://127.0.0.1:8123/callback` -
-    // exactly the redirect URIs the app always allows. Concretely, `POST /oauth/register` with a
-    // loopback `redirect_uris` entry, `GET /oauth2/authorize?...&redirect_uri=http%3A%2F%2F127.0.0.1...`
-    // and the matching `POST /oauth2/token` were all blocked, while the identical requests with an
-    // `https://` redirect URI reached the app. Dynamic Client Registration and the authorization-code
-    // flow were therefore impossible for every local MCP client.
+    // The two AWS managed rule groups below (CommonRuleSet + KnownBadInputs) inspect the request
+    // URI, headers and body and answer any match with a bare 403 that never reaches the application
+    // (nothing is logged by the app). Their generic heuristics are fundamentally incompatible with
+    // two classes of legitimate traffic this server must accept:
     //
-    // Both managed rule groups are consequently scoped down so they skip those three OAuth endpoints,
-    // whose legitimate payloads necessarily contain URLs. Everything else - notably `/mcp` - stays
-    // fully protected. The excluded endpoints keep the rate-based rules below and are strictly
-    // validated by the app itself (exact redirect-URI allowlisting, mandatory PKCE S256, public
-    // clients only). A narrower `ruleActionOverrides` on the single offending managed rule would be
-    // preferable, but the firing rule could not be identified (the WebACL is not readable with the
-    // current IAM permissions and WAF logging was not enabled); the logging configuration added
-    // further down makes the next block diagnosable so this can be tightened later.
-    const wafOauthExcludedPaths = ['/oauth/register', '/oauth2/authorize', '/oauth2/token'];
-    const notOauthEndpoints: wafv2.CfnWebACL.StatementProperty = {
+    //   1. OAuth. RFC 8252 native clients (Claude Desktop, MCP Inspector, VS Code, Cursor) register
+    //      and authorize with loopback callbacks such as `http://127.0.0.1:8123/callback` - exactly
+    //      the redirect URIs the app always allows. Any request carrying a plain `http://` URL was
+    //      rejected by the `://` RFI heuristic, so `POST /oauth/register` with a loopback
+    //      `redirect_uris` entry, `GET /oauth2/authorize?...&redirect_uri=http%3A%2F%2F127.0.0.1...`
+    //      and the matching `POST /oauth2/token` were all blocked while the identical `https://`
+    //      requests reached the app. Dynamic Client Registration and the authorization-code flow
+    //      were therefore impossible for every local MCP client.
+    //
+    //   2. The MCP transport itself (`POST /mcp`, plus the legacy `/sse`). MCP is JSON-RPC over HTTP
+    //      whose tool arguments and results carry arbitrary user- and model-supplied content: URLs
+    //      (`http://...`, the very same `://` heuristic that broke OAuth), snippets of code and
+    //      markup that read as XSS/SQLi to the body rules, and payloads that routinely exceed WAF's
+    //      8 KB body-inspection limit (`SizeRestrictions_BODY` - an AWS WAF service default on
+    //      regional/ALB scope that cannot be raised for an ALB). Left fully covered, the managed
+    //      groups would 403 ordinary MCP calls with no app-visible trace - the exact failure mode
+    //      already proven on the OAuth endpoints.
+    //
+    // Both managed rule groups are consequently scoped down so they skip these endpoints, whose
+    // legitimate payloads necessarily contain URLs and free-form content. Everything else - the
+    // interactive Google login (`/login/**`, `/oauth2/authorization/**`, `/login/oauth2/code/**`),
+    // the discovery documents (`/.well-known/**`) and the actuator health probe - stays fully
+    // protected. The excluded endpoints are not left unguarded: they keep the rate-based rules below
+    // and are strictly protected by the app itself. `/mcp` (and `/sse`) require a valid opaque bearer
+    // token on every request (local introspection), enforce the CORS/Origin allowlist (the MCP
+    // DNS-rebinding guard) and an SSRF guard on connection targets; the OAuth endpoints enforce exact
+    // redirect-URI allowlisting, mandatory PKCE S256 and public-clients-only. A narrower
+    // `ruleActionOverrides` on just the offending managed rules would be preferable, but the firing
+    // rules could not be identified (the WebACL is not readable with the current IAM permissions and
+    // WAF logging was not enabled); the logging configuration added further down makes future blocks
+    // diagnosable so this can be tightened to per-rule overrides later.
+    const wafManagedRuleExcludedPaths = ['/mcp', '/sse', '/oauth/register', '/oauth2/authorize', '/oauth2/token'];
+    const notExcludedEndpoints: wafv2.CfnWebACL.StatementProperty = {
       notStatement: {
         statement: {
           orStatement: {
-            statements: wafOauthExcludedPaths.map((uriPathPrefix) => ({
+            statements: wafManagedRuleExcludedPaths.map((uriPathPrefix) => ({
               byteMatchStatement: {
                 searchString: uriPathPrefix,
                 fieldToMatch: { uriPath: {} },
@@ -449,7 +467,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
             managedRuleGroupStatement: {
               vendorName: 'AWS',
               name: 'AWSManagedRulesCommonRuleSet',
-              scopeDownStatement: notOauthEndpoints,
+              scopeDownStatement: notExcludedEndpoints,
             },
           },
           visibilityConfig: {
@@ -466,7 +484,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
             managedRuleGroupStatement: {
               vendorName: 'AWS',
               name: 'AWSManagedRulesKnownBadInputsRuleSet',
-              scopeDownStatement: notOauthEndpoints,
+              scopeDownStatement: notExcludedEndpoints,
             },
           },
           visibilityConfig: {

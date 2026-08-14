@@ -95,15 +95,32 @@ for the lifetime of the task. Add active eviction on `alpacaProperties.connectio
   10001 (and `chmod 1777 /tmp`) before the app container starts (`dependsOn` condition `SUCCESS`);
   both containers keep an immutable root filesystem. Any new writable mount must be added to that
   fix-up list too.
-- **WAF managed rule groups are scoped down on the OAuth endpoints (accepted trade-off).** Both
-  managed rule groups (`AWSManagedRulesCommonRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet`)
-  answered any request carrying a plain `http://` URL with a bare 403 before it reached the app,
-  which made RFC 8252 loopback redirect URIs — the ones local MCP clients use — unusable: DCR at
-  `/oauth/register`, `/oauth2/authorize` and `/oauth2/token` all failed. Those three paths are now
-  excluded from both rule groups via a `scopeDownStatement`; they stay rate limited (100 req / 5 min
-  / IP) and strictly validated by the app (exact redirect-URI allowlisting, mandatory PKCE S256,
-  public clients only), and every other path — notably `/mcp` — remains fully covered. The exact
-  firing rule could not be identified because the deploy IAM user lacks
+- **WAF managed rule groups are scoped down on the OAuth *and* MCP transport endpoints (accepted
+  trade-off).** Both managed rule groups (`AWSManagedRulesCommonRuleSet`,
+  `AWSManagedRulesKnownBadInputsRuleSet`) answered any request carrying a plain `http://` URL with a
+  bare 403 before it reached the app, which made RFC 8252 loopback redirect URIs — the ones local
+  MCP clients use — unusable: DCR at `/oauth/register`, `/oauth2/authorize` and `/oauth2/token` all
+  failed. The same generic body/URL heuristics are incompatible with the MCP transport itself
+  (`POST /mcp`, legacy `/sse`): MCP is JSON-RPC whose tool arguments and results carry arbitrary
+  user-/model-supplied content — URLs (the same `://` RFI heuristic), code/markup that reads as
+  XSS/SQLi to the body rules, and bodies that routinely exceed WAF's 8 KB body-inspection limit
+  (`SizeRestrictions_BODY`, an AWS service default on regional/ALB scope that cannot be raised for an
+  ALB) — so left fully covered the managed groups would 403 ordinary MCP calls with no app-visible
+  trace. All five paths (`/mcp`, `/sse`, `/oauth/register`, `/oauth2/authorize`, `/oauth2/token`) are
+  therefore excluded from both rule groups via a `scopeDownStatement`. They are not left unguarded:
+  they keep the rate-based rules below and are strictly protected by the app — `/mcp`/`/sse` require a
+  valid opaque bearer token on every request (local introspection), enforce the CORS/Origin
+  allowlist (DNS-rebinding guard) and an SSRF guard on connection targets; OAuth enforces exact
+  redirect-URI allowlisting, mandatory PKCE S256 and public-clients-only. Every other path — the
+  interactive Google login, `/.well-known/**` and the actuator health probe — remains fully covered.
+  The exact firing rules could not be identified because the deploy IAM user lacks
   `wafv2:ListWebACLs` / `wafv2:GetWebACL` and WAF logging was off. Logging now lands in the
-  `aws-waf-logs-broadworks-mcp` log group: revisit and replace the path exclusion with a narrow
-  `ruleActionOverrides` for the single offending rule once the logs name it.
+  `aws-waf-logs-broadworks-mcp` log group: revisit and replace the path exclusions with narrow
+  `ruleActionOverrides` for just the offending rules once the logs name them.
+- **WAF rate limits vs. shared-NAT MCP clients (residual, IP-aggregation limitation).** The
+  rate-based rules key on the client IP: `RateLimitGeneral` allows 2000 req / 5 min / IP (≈6.7 rps)
+  and the OAuth register/token rules 100 req / 5 min / IP. These are generous for a single MCP user
+  (an active agent issues one self-contained `POST /mcp` per JSON-RPC message), but many users behind
+  a single corporate NAT egress IP share one budget and could collectively trip `RateLimitGeneral`.
+  This is inherent to IP-based aggregation and is accepted for now; if it bites, raise the general
+  limit or move `/mcp` to a separate, higher rate-based rule scoped to that path.
