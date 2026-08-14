@@ -1,15 +1,5 @@
 package co.pitayagroup.mcp.broadworks.auth.store.dynamodb;
 
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.CREATED_AT;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.LAST_ACCESSED_AT;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.PK;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.TYPE;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.instant;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.n;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putInstant;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putTtl;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.s;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -28,12 +18,14 @@ import org.springframework.session.MapSession;
 import org.springframework.session.SessionRepository;
 
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.Key;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbAttribute;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
 /**
  * DynamoDB-backed Spring Session {@link SessionRepository} for the interactive HTTP login session.
@@ -47,6 +39,11 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
  * single task's memory, any load-balanced instance can serve any request in the Google sign-in /
  * authorization-code handshake, which removes the need for ALB session stickiness and lets the login
  * session survive task restarts and redeploys.</p>
+ *
+ * <p>Persistence goes through the DynamoDB Enhanced Client: items are mapped to and from the
+ * {@link HttpSessionItem} bean via a {@link TableSchema} rather than hand-built attribute maps. The
+ * enhanced client is layered over the injected low-level {@link DynamoDbClient}, so a single
+ * DynamoDB client bean still backs every store.</p>
  *
  * <p>Timestamps use the same attribute names and ISO-8601 format as every other item this
  * application writes ({@link DynamoDbItems#CREATED_AT} / {@link DynamoDbItems#LAST_ACCESSED_AT});
@@ -67,14 +64,18 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
     private static final String A_MAX_INACTIVE = "maxInactiveSeconds";
     private static final String A_ATTRIBUTES = "attributes";
 
-    private final DynamoDbClient client;
-    private final String tableName;
+    private final DynamoDbTable<HttpSessionItem> table;
     private final Duration defaultMaxInactiveInterval;
 
     public DynamoDbHttpSessionRepository(DynamoDbClient client, String tableName,
                                          Duration defaultMaxInactiveInterval) {
-        this.client = client;
-        this.tableName = tableName;
+        this(DynamoDbEnhancedClient.builder().dynamoDbClient(client).build(), tableName,
+                defaultMaxInactiveInterval);
+    }
+
+    public DynamoDbHttpSessionRepository(DynamoDbEnhancedClient enhancedClient, String tableName,
+                                         Duration defaultMaxInactiveInterval) {
+        this.table = enhancedClient.table(tableName, TableSchema.fromBean(HttpSessionItem.class));
         this.defaultMaxInactiveInterval = defaultMaxInactiveInterval;
     }
 
@@ -93,28 +94,30 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
             deleteById(session.getOriginalId());
         }
 
-        final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(session.getId()));
-        item.put(TYPE, s(TYPE_VALUE));
-        putInstant(item, CREATED_AT, session.getCreationTime());
-        putInstant(item, LAST_ACCESSED_AT, session.getLastAccessedTime());
+        final HttpSessionItem item = new HttpSessionItem();
+        item.setId(session.getId());
+        item.setType(TYPE_VALUE);
+        item.setCreatedAt(session.getCreationTime().toString());
+        item.setLastAccessedAt(session.getLastAccessedTime().toString());
         final long maxInactiveSeconds = session.getMaxInactiveInterval().getSeconds();
-        item.put(A_MAX_INACTIVE, n(maxInactiveSeconds));
+        item.setMaxInactiveSeconds(maxInactiveSeconds);
 
         final Map<String, Object> attributes = new HashMap<>();
         for (String name : session.getAttributeNames()) {
             attributes.put(name, session.getAttribute(name));
         }
         if (!attributes.isEmpty()) {
-            item.put(A_ATTRIBUTES, AttributeValue.builder().b(SdkBytes.fromByteArray(serialize(attributes))).build());
+            item.setAttributes(SdkBytes.fromByteArray(serialize(attributes)));
         }
 
         // Native DynamoDB TTL cleanup: expire at last-access + inactivity window (skip when infinite).
         if (maxInactiveSeconds > 0) {
-            putTtl(item, session.getLastAccessedTime().plusSeconds(maxInactiveSeconds));
+            item.setTtl(session.getLastAccessedTime().plusSeconds(maxInactiveSeconds).getEpochSecond());
         }
 
-        client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
+        // putItem always ignores null top-level attributes, so an empty session / infinite TTL simply
+        // omits the corresponding attribute rather than writing a NULL.
+        table.putItem(item);
     }
 
     @Override
@@ -122,34 +125,31 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         if (id == null) {
             return null;
         }
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(id)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final HttpSessionItem item = table.getItem(Key.builder().partitionValue(id).build());
+        if (item == null) {
             return null;
         }
-        final Map<String, AttributeValue> item = response.item();
 
         final MapSession session = new MapSession(id);
-        final Instant createdAt = instant(item, CREATED_AT);
-        final Instant lastAccessedAt = instant(item, LAST_ACCESSED_AT);
+        final Instant createdAt = parseInstant(item.getCreatedAt());
+        final Instant lastAccessedAt = parseInstant(item.getLastAccessedAt());
         if (createdAt == null || lastAccessedAt == null) {
             // Unusable metadata (e.g. an item written before the attributes were unified): drop it
             // and force re-login rather than resurrecting a session with invented timestamps.
             log.warn("Discarding HTTP session {} without readable {}/{} attributes",
-                    id, CREATED_AT, LAST_ACCESSED_AT);
+                    id, DynamoDbItems.CREATED_AT, DynamoDbItems.LAST_ACCESSED_AT);
             deleteById(id);
             return null;
         }
         session.setCreationTime(createdAt);
         session.setLastAccessedTime(lastAccessedAt);
-        session.setMaxInactiveInterval(Duration.ofSeconds(
-                readLong(item, A_MAX_INACTIVE, MapSession.DEFAULT_MAX_INACTIVE_INTERVAL_SECONDS)));
+        session.setMaxInactiveInterval(Duration.ofSeconds(item.getMaxInactiveSeconds() == null
+                ? MapSession.DEFAULT_MAX_INACTIVE_INTERVAL_SECONDS
+                : item.getMaxInactiveSeconds()));
 
-        final AttributeValue attributes = item.get(A_ATTRIBUTES);
-        if (attributes != null && attributes.b() != null) {
-            final Map<String, Object> map = deserialize(attributes.b().asByteArray());
+        final SdkBytes attributes = item.getAttributes();
+        if (attributes != null) {
+            final Map<String, Object> map = deserialize(attributes.asByteArray());
             if (map == null) {
                 // Undeserializable blob (e.g. after an incompatible class change): drop it and force re-login.
                 deleteById(id);
@@ -170,10 +170,7 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
         if (id == null) {
             return;
         }
-        client.deleteItem(DeleteItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(id)))
-                .build());
+        table.deleteItem(Key.builder().partitionValue(id).build());
     }
 
     // ---- serialization helpers ------------------------------------------
@@ -203,11 +200,96 @@ public class DynamoDbHttpSessionRepository implements SessionRepository<MapSessi
 
     // ---- attribute helpers ----------------------------------------------
 
-    private static long readLong(Map<String, AttributeValue> item, String key, long defaultValue) {
-        final AttributeValue value = item.get(key);
-        if (value == null || value.n() == null) {
-            return defaultValue;
+    /** Reads an ISO-8601 timestamp, tolerating an absent or unparseable value as {@code null}. */
+    private static Instant parseInstant(String raw) {
+        if (raw == null) {
+            return null;
         }
-        return Long.parseLong(value.n());
+        try {
+            return Instant.parse(raw);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Enhanced-client bean mapping the HTTP-session item. Timestamps are ISO-8601 strings (shared
+     * with every other store via {@link DynamoDbItems}); {@link #getTtl() ttl} is epoch seconds as
+     * DynamoDB's native expiry requires; the session attribute map is a JDK-serialized binary blob.
+     */
+    @DynamoDbBean
+    public static class HttpSessionItem {
+
+        private String id;
+        private String type;
+        private String createdAt;
+        private String lastAccessedAt;
+        private Long maxInactiveSeconds;
+        private SdkBytes attributes;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(DynamoDbItems.PK)
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        @DynamoDbAttribute(DynamoDbItems.TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(DynamoDbItems.CREATED_AT)
+        public String getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(String createdAt) {
+            this.createdAt = createdAt;
+        }
+
+        @DynamoDbAttribute(DynamoDbItems.LAST_ACCESSED_AT)
+        public String getLastAccessedAt() {
+            return lastAccessedAt;
+        }
+
+        public void setLastAccessedAt(String lastAccessedAt) {
+            this.lastAccessedAt = lastAccessedAt;
+        }
+
+        @DynamoDbAttribute(A_MAX_INACTIVE)
+        public Long getMaxInactiveSeconds() {
+            return maxInactiveSeconds;
+        }
+
+        public void setMaxInactiveSeconds(Long maxInactiveSeconds) {
+            this.maxInactiveSeconds = maxInactiveSeconds;
+        }
+
+        @DynamoDbAttribute(A_ATTRIBUTES)
+        public SdkBytes getAttributes() {
+            return attributes;
+        }
+
+        public void setAttributes(SdkBytes attributes) {
+            this.attributes = attributes;
+        }
+
+        @DynamoDbAttribute(DynamoDbItems.TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
+        }
     }
 }

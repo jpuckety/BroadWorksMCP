@@ -1,8 +1,6 @@
 package co.pitayagroup.mcp.broadworks.auth.store.dynamodb;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
@@ -10,14 +8,16 @@ import co.pitayagroup.mcp.broadworks.auth.store.EncryptionContext;
 import co.pitayagroup.mcp.broadworks.auth.store.EncryptionService;
 import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
 
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.Key;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbAttribute;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortKey;
+import software.amazon.awssdk.enhanced.dynamodb.model.QueryConditional;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
-import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 /**
  * DynamoDB {@link ResourceStore}.
@@ -28,6 +28,12 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  * encryption context binds each ciphertext to its {@code applicationId}/{@code subject}/
  * {@code resourceId}, so a relocated blob will not decrypt. Strict tenant isolation is enforced by
  * scoping every query to a {@code subject} prefix.</p>
+ *
+ * <p>Persistence goes through the DynamoDB Enhanced Client: items are mapped to and from the
+ * {@link ResourceItem} bean via a {@link TableSchema} rather than hand-built attribute maps, and
+ * {@code listForUser} becomes a {@link QueryConditional#sortBeginsWith begins-with} query on the
+ * sort key. The enhanced client is layered over the injected low-level {@link DynamoDbClient}, so a
+ * single DynamoDB client bean still backs every store.</p>
  */
 public class DynamoDbResourceStore implements ResourceStore {
 
@@ -43,118 +49,196 @@ public class DynamoDbResourceStore implements ResourceStore {
     private static final String A_PASSWORD = "password";
     private static final String A_USE_PRIVATE_AS = "usePrivateApplicationServerAddress";
 
-    private final DynamoDbClient client;
-    private final String tableName;
+    private final DynamoDbTable<ResourceItem> table;
     private final String applicationId;
     private final EncryptionService encryptionService;
 
     public DynamoDbResourceStore(DynamoDbClient client, String tableName, String applicationId,
                                  EncryptionService encryptionService) {
-        this.client = client;
-        this.tableName = tableName;
+        this(DynamoDbEnhancedClient.builder().dynamoDbClient(client).build(), tableName,
+                applicationId, encryptionService);
+    }
+
+    public DynamoDbResourceStore(DynamoDbEnhancedClient enhancedClient, String tableName,
+                                 String applicationId, EncryptionService encryptionService) {
+        this.table = enhancedClient.table(tableName, TableSchema.fromBean(ResourceItem.class));
         this.applicationId = applicationId;
         this.encryptionService = encryptionService;
     }
 
     @Override
     public List<AlpacaResource> listForUser(String subject) {
-        final QueryResponse response = client.query(QueryRequest.builder()
-                .tableName(tableName)
-                .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
-                .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
-                .expressionAttributeValues(Map.of(
-                        ":pk", s(applicationId),
-                        ":prefix", s(subject + "#")))
-                .build());
-        return response.items().stream().map(item -> toResourceDecrypted(subject, item)).toList();
+        final Key prefix = Key.builder()
+                .partitionValue(applicationId)
+                .sortValue(subject + "#")
+                .build();
+        return table.query(QueryConditional.sortBeginsWith(prefix)).items().stream()
+                .map(item -> toResourceDecrypted(subject, item))
+                .toList();
     }
 
     @Override
     public Optional<AlpacaResource> get(String subject, String resourceId) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(key(subject, resourceId))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(toResourceDecrypted(subject, response.item()));
+        final ResourceItem item = table.getItem(key(subject, resourceId));
+        return item == null ? Optional.empty() : Optional.of(toResourceDecrypted(subject, item));
     }
 
     @Override
     public void put(String subject, AlpacaResource resource) {
-        final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(applicationId));
-        item.put(SK, s(subject + "#" + resource.resourceId()));
-        item.put(A_RESOURCE_ID, s(resource.resourceId()));
-        putIfPresent(item, A_DISPLAY_NAME, resource.displayName());
-        putIfPresent(item, A_HOSTNAME, resource.hostname());
-        item.put(A_PORT, n(Integer.toString(resource.port())));
-        putIfPresent(item, A_LOGIN_TYPE, resource.loginType());
-        putIfPresent(item, A_USERNAME, resource.username());
+        final ResourceItem item = new ResourceItem();
+        item.setApplicationId(applicationId);
+        item.setSk(subject + "#" + resource.resourceId());
+        item.setResourceId(resource.resourceId());
+        item.setDisplayName(resource.displayName());
+        item.setHostname(resource.hostname());
+        item.setPort(resource.port());
+        item.setLoginType(resource.loginType());
+        item.setUsername(resource.username());
         // Encrypt the secret before persisting, bound to this application/subject/resource.
-        putIfPresent(item, A_PASSWORD, encryptionService.encrypt(resource.password(),
+        item.setPassword(encryptionService.encrypt(resource.password(),
                 EncryptionContext.forResource(applicationId, subject, resource.resourceId())));
-        item.put(A_USE_PRIVATE_AS, AttributeValue.builder()
-                .bool(resource.usePrivateApplicationServerAddress()).build());
-        client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
+        item.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
+        table.putItem(item);
     }
 
     @Override
     public void delete(String subject, String resourceId) {
-        client.deleteItem(DeleteItemRequest.builder()
-                .tableName(tableName)
-                .key(key(subject, resourceId))
-                .build());
+        table.deleteItem(key(subject, resourceId));
     }
 
     // ---- helpers ---------------------------------------------------------
 
-    private Map<String, AttributeValue> key(String subject, String resourceId) {
-        return Map.of(PK, s(applicationId), SK, s(subject + "#" + resourceId));
+    private Key key(String subject, String resourceId) {
+        return Key.builder()
+                .partitionValue(applicationId)
+                .sortValue(subject + "#" + resourceId)
+                .build();
     }
 
-    private AlpacaResource toResourceDecrypted(String subject, Map<String, AttributeValue> item) {
-        final String resourceId = str(item, A_RESOURCE_ID);
+    private AlpacaResource toResourceDecrypted(String subject, ResourceItem item) {
+        final String resourceId = item.getResourceId();
         return new AlpacaResource(
                 resourceId,
-                str(item, A_DISPLAY_NAME),
-                str(item, A_HOSTNAME),
-                intVal(item, A_PORT),
-                str(item, A_LOGIN_TYPE),
-                str(item, A_USERNAME),
-                encryptionService.decrypt(str(item, A_PASSWORD),
+                item.getDisplayName(),
+                item.getHostname(),
+                item.getPort(),
+                item.getLoginType(),
+                item.getUsername(),
+                encryptionService.decrypt(item.getPassword(),
                         EncryptionContext.forResource(applicationId, subject, resourceId)),
-                boolVal(item, A_USE_PRIVATE_AS)
+                item.isUsePrivateApplicationServerAddress()
         );
     }
 
-    private static AttributeValue s(String value) {
-        return AttributeValue.builder().s(value).build();
-    }
+    /**
+     * Enhanced-client bean mapping a per-user resource item. The composite key is
+     * {@code applicationId} (partition) + {@code sk = <subject>#<resourceId>} (sort). The
+     * {@code password} is stored as the {@link EncryptionService} ciphertext, never plaintext.
+     */
+    @DynamoDbBean
+    public static class ResourceItem {
 
-    private static AttributeValue n(String value) {
-        return AttributeValue.builder().n(value).build();
-    }
+        private String applicationId;
+        private String sk;
+        private String resourceId;
+        private String displayName;
+        private String hostname;
+        private int port;
+        private String loginType;
+        private String username;
+        private String password;
+        private boolean usePrivateApplicationServerAddress;
 
-    private static void putIfPresent(Map<String, AttributeValue> item, String key, String value) {
-        if (value != null) {
-            item.put(key, s(value));
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getApplicationId() {
+            return applicationId;
         }
-    }
 
-    private static String str(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        return value == null ? null : value.s();
-    }
+        public void setApplicationId(String applicationId) {
+            this.applicationId = applicationId;
+        }
 
-    private static int intVal(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        return value == null || value.n() == null ? 0 : Integer.parseInt(value.n());
-    }
+        @DynamoDbSortKey
+        @DynamoDbAttribute(SK)
+        public String getSk() {
+            return sk;
+        }
 
-    private static boolean boolVal(Map<String, AttributeValue> item, String key) {
-        final AttributeValue value = item.get(key);
-        return value != null && Boolean.TRUE.equals(value.bool());
+        public void setSk(String sk) {
+            this.sk = sk;
+        }
+
+        @DynamoDbAttribute(A_RESOURCE_ID)
+        public String getResourceId() {
+            return resourceId;
+        }
+
+        public void setResourceId(String resourceId) {
+            this.resourceId = resourceId;
+        }
+
+        @DynamoDbAttribute(A_DISPLAY_NAME)
+        public String getDisplayName() {
+            return displayName;
+        }
+
+        public void setDisplayName(String displayName) {
+            this.displayName = displayName;
+        }
+
+        @DynamoDbAttribute(A_HOSTNAME)
+        public String getHostname() {
+            return hostname;
+        }
+
+        public void setHostname(String hostname) {
+            this.hostname = hostname;
+        }
+
+        @DynamoDbAttribute(A_PORT)
+        public int getPort() {
+            return port;
+        }
+
+        public void setPort(int port) {
+            this.port = port;
+        }
+
+        @DynamoDbAttribute(A_LOGIN_TYPE)
+        public String getLoginType() {
+            return loginType;
+        }
+
+        public void setLoginType(String loginType) {
+            this.loginType = loginType;
+        }
+
+        @DynamoDbAttribute(A_USERNAME)
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        @DynamoDbAttribute(A_PASSWORD)
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+
+        @DynamoDbAttribute(A_USE_PRIVATE_AS)
+        public boolean isUsePrivateApplicationServerAddress() {
+            return usePrivateApplicationServerAddress;
+        }
+
+        public void setUsePrivateApplicationServerAddress(boolean usePrivateApplicationServerAddress) {
+            this.usePrivateApplicationServerAddress = usePrivateApplicationServerAddress;
+        }
     }
 }

@@ -6,19 +6,11 @@ import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.CR
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.EXPIRES_AT;
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.PK;
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.SESSION_ID;
+import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.TTL;
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.TYPE;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.instant;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putIfPresent;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putInstant;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putTtl;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.s;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.str;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.strList;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.stringList;
 
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.store.EncryptionContext;
@@ -28,14 +20,16 @@ import co.pitayagroup.mcp.broadworks.auth.store.Session;
 import co.pitayagroup.mcp.broadworks.auth.store.SessionStore;
 import co.pitayagroup.mcp.broadworks.auth.store.TokenHashing;
 
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.Key;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbAttribute;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecondaryPartitionKey;
+import software.amazon.awssdk.enhanced.dynamodb.model.QueryConditional;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
-import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 /**
  * DynamoDB single-table {@link SessionStore}.
@@ -47,6 +41,13 @@ import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
  * {@code refreshToken}). Token rotation uses reverse pointer items
  * {@code authz-sess#<authorizationId>} (no extra GSI). A numeric {@code ttl} attribute enables
  * native DynamoDB expiry.</p>
+ *
+ * <p>Persistence goes through the DynamoDB Enhanced Client. The three item shapes that share the
+ * table each map to their own bean and {@link TableSchema} view over the same physical table:
+ * {@link SessionItem} (the session, which also owns the {@code refresh-index} secondary key),
+ * {@link ClientItem} (a registered client) and {@link PointerItem} (the authorization&rarr;session
+ * rotation pointer). The enhanced client is layered over the injected low-level
+ * {@link DynamoDbClient}, so a single DynamoDB client bean still backs every store.</p>
  *
  * <p>Item attribute names and value encodings come from {@link DynamoDbItems}, shared with the other
  * stores, so a timestamp such as {@code createdAt} means the same thing and has the same ISO-8601
@@ -67,6 +68,10 @@ public class DynamoDbSessionStore implements SessionStore {
     static final String AUTHZ_SESS_PREFIX = "authz-sess#";
     static final String REFRESH_INDEX = "refresh-index";
 
+    private static final String TYPE_SESSION = "session";
+    private static final String TYPE_CLIENT = "client";
+    private static final String TYPE_AUTHZ_POINTER = "authz-session-pointer";
+
     private static final String A_ACCESS_TOKEN = "accessTokenHash";
     /** GSI partition key attribute; holds the refresh-token digest, never the token itself. */
     private static final String A_REFRESH_TOKEN = "refreshToken";
@@ -83,15 +88,23 @@ public class DynamoDbSessionStore implements SessionStore {
     private static final String A_GRANT_TYPES = "grantTypes";
     private static final String A_AUTH_METHOD = "tokenEndpointAuthMethod";
 
-    private final DynamoDbClient client;
-    private final String tableName;
+    private final DynamoDbTable<SessionItem> sessionTable;
+    private final DynamoDbTable<ClientItem> clientTable;
+    private final DynamoDbTable<PointerItem> pointerTable;
     private final String applicationId;
     private final EncryptionService encryptionService;
 
     public DynamoDbSessionStore(DynamoDbClient client, String tableName, String applicationId,
                                 EncryptionService encryptionService) {
-        this.client = client;
-        this.tableName = tableName;
+        this(DynamoDbEnhancedClient.builder().dynamoDbClient(client).build(), tableName,
+                applicationId, encryptionService);
+    }
+
+    public DynamoDbSessionStore(DynamoDbEnhancedClient enhancedClient, String tableName,
+                                String applicationId, EncryptionService encryptionService) {
+        this.sessionTable = enhancedClient.table(tableName, TableSchema.fromBean(SessionItem.class));
+        this.clientTable = enhancedClient.table(tableName, TableSchema.fromBean(ClientItem.class));
+        this.pointerTable = enhancedClient.table(tableName, TableSchema.fromBean(PointerItem.class));
         this.applicationId = applicationId;
         this.encryptionService = encryptionService;
     }
@@ -108,36 +121,37 @@ public class DynamoDbSessionStore implements SessionStore {
             });
         }
 
-        final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(SESSION_PREFIX + sessionIdHash));
-        item.put(TYPE, s("session"));
-        item.put(SESSION_ID, s(sessionIdHash));
-        item.put(A_ACCESS_TOKEN, s(TokenHashing.sha256(session.accessToken())));
-        putIfPresent(item, A_REFRESH_TOKEN, TokenHashing.sha256(session.refreshToken()));
-        putIfPresent(item, CLIENT_ID, session.clientId());
-        item.put(A_SUBJECT, s(session.subject()));
-        putIfPresent(item, A_EMAIL, session.email());
-        putIfPresent(item, A_ID_TOKEN, encrypt(session.subject(), session.idToken()));
-        putIfPresent(item, A_IDP_REFRESH, encrypt(session.subject(), session.idpRefreshToken()));
-        putInstant(item, A_ACCESS_EXP, session.accessTokenExpiresAt());
-        putInstant(item, A_REFRESH_EXP, session.refreshTokenExpiresAt());
-        putInstant(item, CREATED_AT, session.createdAt());
-        putIfPresent(item, AUTHORIZATION_ID, session.authorizationId());
-        putIfPresent(item, A_AUDIENCE, session.audience());
         final Instant ttl = session.refreshTokenExpiresAt() != null
                 ? session.refreshTokenExpiresAt()
                 : session.accessTokenExpiresAt();
-        putTtl(item, ttl);
-        client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
+
+        final SessionItem item = new SessionItem();
+        item.setPk(SESSION_PREFIX + sessionIdHash);
+        item.setType(TYPE_SESSION);
+        item.setSessionId(sessionIdHash);
+        item.setAccessTokenHash(TokenHashing.sha256(session.accessToken()));
+        item.setRefreshToken(TokenHashing.sha256(session.refreshToken()));
+        item.setClientId(session.clientId());
+        item.setSubject(session.subject());
+        item.setEmail(session.email());
+        item.setIdToken(encrypt(session.subject(), session.idToken()));
+        item.setIdpRefreshToken(encrypt(session.subject(), session.idpRefreshToken()));
+        item.setAccessTokenExpiresAt(DynamoDbItems.format(session.accessTokenExpiresAt()));
+        item.setRefreshTokenExpiresAt(DynamoDbItems.format(session.refreshTokenExpiresAt()));
+        item.setCreatedAt(DynamoDbItems.format(session.createdAt()));
+        item.setAuthorizationId(session.authorizationId());
+        item.setAudience(session.audience());
+        item.setTtl(DynamoDbItems.ttlEpochSeconds(ttl));
+        sessionTable.putItem(item);
 
         if (session.authorizationId() != null && !session.authorizationId().isBlank()) {
-            final Map<String, AttributeValue> pointer = new HashMap<>();
-            pointer.put(PK, s(AUTHZ_SESS_PREFIX + session.authorizationId()));
-            pointer.put(TYPE, s("authz-session-pointer"));
-            pointer.put(SESSION_ID, s(sessionIdHash));
-            pointer.put(AUTHORIZATION_ID, s(session.authorizationId()));
-            putTtl(pointer, ttl);
-            client.putItem(PutItemRequest.builder().tableName(tableName).item(pointer).build());
+            final PointerItem pointer = new PointerItem();
+            pointer.setPk(AUTHZ_SESS_PREFIX + session.authorizationId());
+            pointer.setType(TYPE_AUTHZ_POINTER);
+            pointer.setSessionId(sessionIdHash);
+            pointer.setAuthorizationId(session.authorizationId());
+            pointer.setTtl(DynamoDbItems.ttlEpochSeconds(ttl));
+            pointerTable.putItem(pointer);
         }
         return session;
     }
@@ -147,14 +161,9 @@ public class DynamoDbSessionStore implements SessionStore {
         if (accessToken == null) {
             return Optional.empty();
         }
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(SESSION_PREFIX + TokenHashing.sha256(accessToken))))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(toSession(response.item()));
+        final SessionItem item = sessionTable.getItem(
+                Key.builder().partitionValue(SESSION_PREFIX + TokenHashing.sha256(accessToken)).build());
+        return item == null ? Optional.empty() : Optional.of(toSession(item));
     }
 
     @Override
@@ -162,18 +171,12 @@ public class DynamoDbSessionStore implements SessionStore {
         if (refreshToken == null) {
             return Optional.empty();
         }
-        final QueryResponse response = client.query(QueryRequest.builder()
-                .tableName(tableName)
-                .indexName(REFRESH_INDEX)
-                .keyConditionExpression("#rt = :rt")
-                .expressionAttributeNames(Map.of("#rt", A_REFRESH_TOKEN))
-                .expressionAttributeValues(Map.of(":rt", s(TokenHashing.sha256(refreshToken))))
-                .limit(1)
-                .build());
-        if (response.count() == 0) {
-            return Optional.empty();
-        }
-        return Optional.of(toSession(response.items().get(0)));
+        final Key key = Key.builder().partitionValue(TokenHashing.sha256(refreshToken)).build();
+        return sessionTable.index(REFRESH_INDEX)
+                .query(QueryConditional.keyEqualTo(key)).stream()
+                .flatMap(page -> page.items().stream())
+                .findFirst()
+                .map(this::toSession);
     }
 
     @Override
@@ -194,43 +197,33 @@ public class DynamoDbSessionStore implements SessionStore {
 
     /** Deletes by the already-hashed session id (pointer items store digests, never raw tokens). */
     private void deleteSessionByHash(String sessionIdHash) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(SESSION_PREFIX + sessionIdHash)))
-                .build());
-        final String authorizationId = response.hasItem() && !response.item().isEmpty()
-                ? str(response.item(), AUTHORIZATION_ID)
-                : null;
-        client.deleteItem(DeleteItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(SESSION_PREFIX + sessionIdHash)))
-                .build());
+        final SessionItem existing = sessionTable.getItem(
+                Key.builder().partitionValue(SESSION_PREFIX + sessionIdHash).build());
+        final String authorizationId = existing == null ? null : existing.getAuthorizationId();
+        sessionTable.deleteItem(Key.builder().partitionValue(SESSION_PREFIX + sessionIdHash).build());
         if (authorizationId != null && !authorizationId.isBlank()) {
             final Optional<String> pointed = loadAuthzSessionPointer(authorizationId);
             if (pointed.isPresent() && sessionIdHash.equals(pointed.get())) {
-                client.deleteItem(DeleteItemRequest.builder()
-                        .tableName(tableName)
-                        .key(Map.of(PK, s(AUTHZ_SESS_PREFIX + authorizationId)))
-                        .build());
+                pointerTable.deleteItem(Key.builder().partitionValue(AUTHZ_SESS_PREFIX + authorizationId).build());
             }
         }
     }
 
     @Override
     public void saveClient(RegisteredClientRecord clientRecord) {
-        final Map<String, AttributeValue> item = new HashMap<>();
-        item.put(PK, s(CLIENT_PREFIX + clientRecord.clientId()));
-        item.put(TYPE, s("client"));
-        item.put(CLIENT_ID, s(clientRecord.clientId()));
-        putIfPresent(item, A_CLIENT_NAME, clientRecord.clientName());
-        item.put(A_REDIRECT_URIS, stringList(clientRecord.redirectUris()));
-        item.put(A_SCOPES, stringList(clientRecord.scopes()));
-        item.put(A_GRANT_TYPES, stringList(clientRecord.grantTypes()));
-        putIfPresent(item, A_AUTH_METHOD, clientRecord.tokenEndpointAuthMethod());
-        putInstant(item, CREATED_AT, clientRecord.createdAt());
-        putInstant(item, EXPIRES_AT, clientRecord.expiresAt());
-        putTtl(item, clientRecord.expiresAt());
-        client.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
+        final ClientItem item = new ClientItem();
+        item.setPk(CLIENT_PREFIX + clientRecord.clientId());
+        item.setType(TYPE_CLIENT);
+        item.setClientId(clientRecord.clientId());
+        item.setClientName(clientRecord.clientName());
+        item.setRedirectUris(clientRecord.redirectUris());
+        item.setScopes(clientRecord.scopes());
+        item.setGrantTypes(clientRecord.grantTypes());
+        item.setTokenEndpointAuthMethod(clientRecord.tokenEndpointAuthMethod());
+        item.setCreatedAt(DynamoDbItems.format(clientRecord.createdAt()));
+        item.setExpiresAt(DynamoDbItems.format(clientRecord.expiresAt()));
+        item.setTtl(DynamoDbItems.ttlEpochSeconds(clientRecord.expiresAt()));
+        clientTable.putItem(item);
     }
 
     @Override
@@ -238,14 +231,12 @@ public class DynamoDbSessionStore implements SessionStore {
         if (clientId == null) {
             return Optional.empty();
         }
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(CLIENT_PREFIX + clientId)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final ClientItem item = clientTable.getItem(
+                Key.builder().partitionValue(CLIENT_PREFIX + clientId).build());
+        if (item == null) {
             return Optional.empty();
         }
-        final RegisteredClientRecord client = toClient(response.item());
+        final RegisteredClientRecord client = toClient(item);
         if (client.expiresAt() != null && Instant.now().isAfter(client.expiresAt())) {
             return Optional.empty();
         }
@@ -253,46 +244,44 @@ public class DynamoDbSessionStore implements SessionStore {
     }
 
     private Optional<String> loadAuthzSessionPointer(String authorizationId) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(AUTHZ_SESS_PREFIX + authorizationId)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final PointerItem item = pointerTable.getItem(
+                Key.builder().partitionValue(AUTHZ_SESS_PREFIX + authorizationId).build());
+        if (item == null) {
             return Optional.empty();
         }
-        final String sessionId = str(response.item(), SESSION_ID);
+        final String sessionId = item.getSessionId();
         return sessionId == null || sessionId.isBlank() ? Optional.empty() : Optional.of(sessionId);
     }
 
-    private Session toSession(Map<String, AttributeValue> item) {
-        final String subject = str(item, A_SUBJECT);
+    private Session toSession(SessionItem item) {
+        final String subject = item.getSubject();
         return new Session(
-                str(item, SESSION_ID),
-                str(item, A_ACCESS_TOKEN),
-                str(item, A_REFRESH_TOKEN),
-                str(item, CLIENT_ID),
+                item.getSessionId(),
+                item.getAccessTokenHash(),
+                item.getRefreshToken(),
+                item.getClientId(),
                 subject,
-                str(item, A_EMAIL),
-                decrypt(subject, str(item, A_ID_TOKEN)),
-                decrypt(subject, str(item, A_IDP_REFRESH)),
-                instant(item, A_ACCESS_EXP),
-                instant(item, A_REFRESH_EXP),
-                instant(item, CREATED_AT),
-                str(item, AUTHORIZATION_ID),
-                str(item, A_AUDIENCE)
+                item.getEmail(),
+                decrypt(subject, item.getIdToken()),
+                decrypt(subject, item.getIdpRefreshToken()),
+                DynamoDbItems.parseInstant(item.getAccessTokenExpiresAt()),
+                DynamoDbItems.parseInstant(item.getRefreshTokenExpiresAt()),
+                DynamoDbItems.parseInstant(item.getCreatedAt()),
+                item.getAuthorizationId(),
+                item.getAudience()
         );
     }
 
-    private RegisteredClientRecord toClient(Map<String, AttributeValue> item) {
+    private RegisteredClientRecord toClient(ClientItem item) {
         return new RegisteredClientRecord(
-                str(item, CLIENT_ID),
-                str(item, A_CLIENT_NAME),
-                strList(item, A_REDIRECT_URIS),
-                strList(item, A_SCOPES),
-                strList(item, A_GRANT_TYPES),
-                str(item, A_AUTH_METHOD),
-                instant(item, CREATED_AT),
-                instant(item, EXPIRES_AT)
+                item.getClientId(),
+                item.getClientName(),
+                item.getRedirectUris(),
+                item.getScopes(),
+                item.getGrantTypes(),
+                item.getTokenEndpointAuthMethod(),
+                DynamoDbItems.parseInstant(item.getCreatedAt()),
+                DynamoDbItems.parseInstant(item.getExpiresAt())
         );
     }
 
@@ -304,5 +293,355 @@ public class DynamoDbSessionStore implements SessionStore {
     private String decrypt(String subject, String value) {
         return value == null ? null
                 : encryptionService.decrypt(value, EncryptionContext.forSession(applicationId, subject));
+    }
+
+    // ---- item beans ------------------------------------------------------
+
+    /**
+     * The OAuth session item ({@code sess#<sessionIdHash>}). It owns the {@code refresh-index}
+     * secondary partition key so a refresh token can be resolved to its session in one query.
+     */
+    @DynamoDbBean
+    public static class SessionItem {
+
+        private String pk;
+        private String type;
+        private String sessionId;
+        private String accessTokenHash;
+        private String refreshToken;
+        private String clientId;
+        private String subject;
+        private String email;
+        private String idToken;
+        private String idpRefreshToken;
+        private String accessTokenExpiresAt;
+        private String refreshTokenExpiresAt;
+        private String createdAt;
+        private String authorizationId;
+        private String audience;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getPk() {
+            return pk;
+        }
+
+        public void setPk(String pk) {
+            this.pk = pk;
+        }
+
+        @DynamoDbAttribute(TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(SESSION_ID)
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        @DynamoDbAttribute(A_ACCESS_TOKEN)
+        public String getAccessTokenHash() {
+            return accessTokenHash;
+        }
+
+        public void setAccessTokenHash(String accessTokenHash) {
+            this.accessTokenHash = accessTokenHash;
+        }
+
+        @DynamoDbSecondaryPartitionKey(indexNames = REFRESH_INDEX)
+        @DynamoDbAttribute(A_REFRESH_TOKEN)
+        public String getRefreshToken() {
+            return refreshToken;
+        }
+
+        public void setRefreshToken(String refreshToken) {
+            this.refreshToken = refreshToken;
+        }
+
+        @DynamoDbAttribute(CLIENT_ID)
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        @DynamoDbAttribute(A_SUBJECT)
+        public String getSubject() {
+            return subject;
+        }
+
+        public void setSubject(String subject) {
+            this.subject = subject;
+        }
+
+        @DynamoDbAttribute(A_EMAIL)
+        public String getEmail() {
+            return email;
+        }
+
+        public void setEmail(String email) {
+            this.email = email;
+        }
+
+        @DynamoDbAttribute(A_ID_TOKEN)
+        public String getIdToken() {
+            return idToken;
+        }
+
+        public void setIdToken(String idToken) {
+            this.idToken = idToken;
+        }
+
+        @DynamoDbAttribute(A_IDP_REFRESH)
+        public String getIdpRefreshToken() {
+            return idpRefreshToken;
+        }
+
+        public void setIdpRefreshToken(String idpRefreshToken) {
+            this.idpRefreshToken = idpRefreshToken;
+        }
+
+        @DynamoDbAttribute(A_ACCESS_EXP)
+        public String getAccessTokenExpiresAt() {
+            return accessTokenExpiresAt;
+        }
+
+        public void setAccessTokenExpiresAt(String accessTokenExpiresAt) {
+            this.accessTokenExpiresAt = accessTokenExpiresAt;
+        }
+
+        @DynamoDbAttribute(A_REFRESH_EXP)
+        public String getRefreshTokenExpiresAt() {
+            return refreshTokenExpiresAt;
+        }
+
+        public void setRefreshTokenExpiresAt(String refreshTokenExpiresAt) {
+            this.refreshTokenExpiresAt = refreshTokenExpiresAt;
+        }
+
+        @DynamoDbAttribute(CREATED_AT)
+        public String getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(String createdAt) {
+            this.createdAt = createdAt;
+        }
+
+        @DynamoDbAttribute(AUTHORIZATION_ID)
+        public String getAuthorizationId() {
+            return authorizationId;
+        }
+
+        public void setAuthorizationId(String authorizationId) {
+            this.authorizationId = authorizationId;
+        }
+
+        @DynamoDbAttribute(A_AUDIENCE)
+        public String getAudience() {
+            return audience;
+        }
+
+        public void setAudience(String audience) {
+            this.audience = audience;
+        }
+
+        @DynamoDbAttribute(TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
+        }
+    }
+
+    /** A dynamically registered OAuth client item ({@code client#<clientId>}). */
+    @DynamoDbBean
+    public static class ClientItem {
+
+        private String pk;
+        private String type;
+        private String clientId;
+        private String clientName;
+        private List<String> redirectUris;
+        private List<String> scopes;
+        private List<String> grantTypes;
+        private String tokenEndpointAuthMethod;
+        private String createdAt;
+        private String expiresAt;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getPk() {
+            return pk;
+        }
+
+        public void setPk(String pk) {
+            this.pk = pk;
+        }
+
+        @DynamoDbAttribute(TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(CLIENT_ID)
+        public String getClientId() {
+            return clientId;
+        }
+
+        public void setClientId(String clientId) {
+            this.clientId = clientId;
+        }
+
+        @DynamoDbAttribute(A_CLIENT_NAME)
+        public String getClientName() {
+            return clientName;
+        }
+
+        public void setClientName(String clientName) {
+            this.clientName = clientName;
+        }
+
+        @DynamoDbAttribute(A_REDIRECT_URIS)
+        public List<String> getRedirectUris() {
+            return redirectUris;
+        }
+
+        public void setRedirectUris(List<String> redirectUris) {
+            this.redirectUris = redirectUris;
+        }
+
+        @DynamoDbAttribute(A_SCOPES)
+        public List<String> getScopes() {
+            return scopes;
+        }
+
+        public void setScopes(List<String> scopes) {
+            this.scopes = scopes;
+        }
+
+        @DynamoDbAttribute(A_GRANT_TYPES)
+        public List<String> getGrantTypes() {
+            return grantTypes;
+        }
+
+        public void setGrantTypes(List<String> grantTypes) {
+            this.grantTypes = grantTypes;
+        }
+
+        @DynamoDbAttribute(A_AUTH_METHOD)
+        public String getTokenEndpointAuthMethod() {
+            return tokenEndpointAuthMethod;
+        }
+
+        public void setTokenEndpointAuthMethod(String tokenEndpointAuthMethod) {
+            this.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
+        }
+
+        @DynamoDbAttribute(CREATED_AT)
+        public String getCreatedAt() {
+            return createdAt;
+        }
+
+        public void setCreatedAt(String createdAt) {
+            this.createdAt = createdAt;
+        }
+
+        @DynamoDbAttribute(EXPIRES_AT)
+        public String getExpiresAt() {
+            return expiresAt;
+        }
+
+        public void setExpiresAt(String expiresAt) {
+            this.expiresAt = expiresAt;
+        }
+
+        @DynamoDbAttribute(TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
+        }
+    }
+
+    /**
+     * The authorization&rarr;session rotation pointer item ({@code authz-sess#<authorizationId>}).
+     * Holds the current session-id digest so a re-authorization can evict the prior session.
+     */
+    @DynamoDbBean
+    public static class PointerItem {
+
+        private String pk;
+        private String type;
+        private String sessionId;
+        private String authorizationId;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getPk() {
+            return pk;
+        }
+
+        public void setPk(String pk) {
+            this.pk = pk;
+        }
+
+        @DynamoDbAttribute(TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(SESSION_ID)
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        @DynamoDbAttribute(AUTHORIZATION_ID)
+        public String getAuthorizationId() {
+            return authorizationId;
+        }
+
+        public void setAuthorizationId(String authorizationId) {
+            this.authorizationId = authorizationId;
+        }
+
+        @DynamoDbAttribute(TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
+        }
     }
 }

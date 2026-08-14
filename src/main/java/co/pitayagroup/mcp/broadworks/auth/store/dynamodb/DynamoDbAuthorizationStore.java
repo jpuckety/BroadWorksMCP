@@ -2,18 +2,15 @@ package co.pitayagroup.mcp.broadworks.auth.store.dynamodb;
 
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.AUTHORIZATION_ID;
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.PK;
+import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.TTL;
 import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.TYPE;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.putTtl;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.s;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.str;
-import static co.pitayagroup.mcp.broadworks.auth.store.dynamodb.DynamoDbItems.stringList;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import co.pitayagroup.mcp.broadworks.auth.store.AuthorizationSerialization;
 import co.pitayagroup.mcp.broadworks.auth.store.AuthorizationStore;
@@ -27,13 +24,17 @@ import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.server.authorization.OAuth2Authorization;
 import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationCode;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
+
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbTable;
+import software.amazon.awssdk.enhanced.dynamodb.Key;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbAttribute;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
+import software.amazon.awssdk.enhanced.dynamodb.model.TransactWriteItemsEnhancedRequest;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
-import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
  * DynamoDB single-table {@link AuthorizationStore} sharing the sessions table.
@@ -47,6 +48,14 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
  * {@link DynamoDbSessionStore}. (The interactive HTTP login session has its own table, see
  * {@link DynamoDbHttpSessionRepository}.) Attribute names and value encodings come from
  * {@link DynamoDbItems}, shared with the other stores.</p>
+ *
+ * <p>Persistence goes through the DynamoDB Enhanced Client: the two item shapes each map to their
+ * own bean and {@link TableSchema} view over the same physical table — {@link AuthItem} (the
+ * encrypted authorization payload plus its pointer list) and {@link TokenPointerItem} (a reverse
+ * token pointer). The atomic delete-stale-pointers + put-payload + put-pointers write uses the
+ * enhanced client's {@link DynamoDbEnhancedClient#transactWriteItems transactWriteItems}. The
+ * enhanced client is layered over the injected low-level {@link DynamoDbClient}, so a single
+ * DynamoDB client bean still backs every store.</p>
  *
  * <p>Token values are hashed before they become part of a key so no replayable credential is ever
  * written, and the payload (which holds the tokens themselves plus the authenticated principal) is
@@ -63,15 +72,26 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     private static final String A_TOKEN_TYPE = "tokenType";
     private static final String A_POINTERS = "tokenPointers";
 
-    private final DynamoDbClient client;
-    private final String tableName;
+    /** DynamoDB caps a single transactional write at 100 actions. */
+    private static final int TRANSACTION_LIMIT = 100;
+
+    private final DynamoDbEnhancedClient enhancedClient;
+    private final DynamoDbTable<AuthItem> authTable;
+    private final DynamoDbTable<TokenPointerItem> pointerTable;
     private final String applicationId;
     private final EncryptionService encryptionService;
 
     public DynamoDbAuthorizationStore(DynamoDbClient client, String tableName, String applicationId,
                                       EncryptionService encryptionService) {
-        this.client = client;
-        this.tableName = tableName;
+        this(DynamoDbEnhancedClient.builder().dynamoDbClient(client).build(), tableName,
+                applicationId, encryptionService);
+    }
+
+    public DynamoDbAuthorizationStore(DynamoDbEnhancedClient enhancedClient, String tableName,
+                                      String applicationId, EncryptionService encryptionService) {
+        this.enhancedClient = enhancedClient;
+        this.authTable = enhancedClient.table(tableName, TableSchema.fromBean(AuthItem.class));
+        this.pointerTable = enhancedClient.table(tableName, TableSchema.fromBean(TokenPointerItem.class));
         this.applicationId = applicationId;
         this.encryptionService = encryptionService;
     }
@@ -80,44 +100,36 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     public void saveAuthorization(OAuth2Authorization authorization) {
         final List<String> newPointers = pointerKeys(authorization);
         final List<String> oldPointers = loadPointerList(authorization.getId());
-        final List<TransactWriteItem> items = new ArrayList<>();
+        final List<Consumer<TransactWriteItemsEnhancedRequest.Builder>> ops = new ArrayList<>();
 
         for (String old : oldPointers) {
             if (!newPointers.contains(old)) {
-                items.add(TransactWriteItem.builder()
-                        .delete(d -> d.tableName(tableName).key(Map.of(PK, s(old))))
-                        .build());
+                ops.add(b -> b.addDeleteItem(pointerTable, Key.builder().partitionValue(old).build()));
             }
         }
 
-        final Instant ttl = resolveTtl(authorization);
-        final Map<String, AttributeValue> authItem = new HashMap<>();
-        authItem.put(PK, s(OAUTH_PREFIX + authorization.getId()));
-        authItem.put(TYPE, s(TYPE_AUTH));
-        authItem.put(AUTHORIZATION_ID, s(authorization.getId()));
-        authItem.put(A_PAYLOAD, AttributeValue.builder()
-                .b(SdkBytes.fromByteArray(encryptionService.encryptBytes(
-                        AuthorizationSerialization.serialize(authorization),
-                        context(authorization.getId()))))
-                .build());
-        authItem.put(A_POINTERS, stringList(newPointers));
-        putTtl(authItem, ttl);
-        items.add(TransactWriteItem.builder()
-                .put(p -> p.tableName(tableName).item(authItem))
-                .build());
+        final Long ttl = DynamoDbItems.ttlEpochSeconds(resolveTtl(authorization));
+        final AuthItem authItem = new AuthItem();
+        authItem.setPk(OAUTH_PREFIX + authorization.getId());
+        authItem.setType(TYPE_AUTH);
+        authItem.setAuthorizationId(authorization.getId());
+        authItem.setPayload(SdkBytes.fromByteArray(encryptionService.encryptBytes(
+                AuthorizationSerialization.serialize(authorization),
+                context(authorization.getId()))));
+        authItem.setTokenPointers(newPointers);
+        authItem.setTtl(ttl);
+        ops.add(b -> b.addPutItem(authTable, authItem));
 
         for (String pointer : newPointers) {
-            final Map<String, AttributeValue> pointerItem = new HashMap<>();
-            pointerItem.put(PK, s(pointer));
-            pointerItem.put(TYPE, s(TYPE_TOKEN));
-            pointerItem.put(AUTHORIZATION_ID, s(authorization.getId()));
-            pointerItem.put(A_TOKEN_TYPE, s(tokenTypeFromPointer(pointer)));
-            putTtl(pointerItem, ttl);
-            items.add(TransactWriteItem.builder()
-                    .put(p -> p.tableName(tableName).item(pointerItem))
-                    .build());
+            final TokenPointerItem pointerItem = new TokenPointerItem();
+            pointerItem.setPk(pointer);
+            pointerItem.setType(TYPE_TOKEN);
+            pointerItem.setAuthorizationId(authorization.getId());
+            pointerItem.setTokenType(tokenTypeFromPointer(pointer));
+            pointerItem.setTtl(ttl);
+            ops.add(b -> b.addPutItem(pointerTable, pointerItem));
         }
-        writeInBatches(items);
+        writeInBatches(ops);
     }
 
     @Override
@@ -129,17 +141,13 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         if (pointers.isEmpty()) {
             pointers = new ArrayList<>(pointerKeys(authorization));
         }
-        final List<TransactWriteItem> items = new ArrayList<>();
-        items.add(TransactWriteItem.builder()
-                .delete(d -> d.tableName(tableName)
-                        .key(Map.of(PK, s(OAUTH_PREFIX + authorization.getId()))))
-                .build());
+        final List<Consumer<TransactWriteItemsEnhancedRequest.Builder>> ops = new ArrayList<>();
+        ops.add(b -> b.addDeleteItem(authTable,
+                Key.builder().partitionValue(OAUTH_PREFIX + authorization.getId()).build()));
         for (String pointer : pointers) {
-            items.add(TransactWriteItem.builder()
-                    .delete(d -> d.tableName(tableName).key(Map.of(PK, s(pointer))))
-                    .build());
+            ops.add(b -> b.addDeleteItem(pointerTable, Key.builder().partitionValue(pointer).build()));
         }
-        writeInBatches(items);
+        writeInBatches(ops);
     }
 
     @Override
@@ -173,34 +181,21 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     }
 
     private Optional<OAuth2Authorization> findByPointer(String pointerPk) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(pointerPk)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final TokenPointerItem pointer = pointerTable.getItem(
+                Key.builder().partitionValue(pointerPk).build());
+        if (pointer == null || pointer.getAuthorizationId() == null) {
             return Optional.empty();
         }
-        final AttributeValue authId = response.item().get(AUTHORIZATION_ID);
-        if (authId == null || authId.s() == null) {
-            return Optional.empty();
-        }
-        return loadAuthorization(OAUTH_PREFIX + authId.s());
+        return loadAuthorization(OAUTH_PREFIX + pointer.getAuthorizationId());
     }
 
     private Optional<OAuth2Authorization> loadAuthorization(String pk) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(pk)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final AuthItem item = authTable.getItem(Key.builder().partitionValue(pk).build());
+        if (item == null || item.getPayload() == null) {
             return Optional.empty();
         }
-        final AttributeValue payload = response.item().get(A_PAYLOAD);
-        if (payload == null || payload.b() == null) {
-            return Optional.empty();
-        }
-        final String authorizationId = str(response.item(), AUTHORIZATION_ID);
-        final byte[] plaintext = encryptionService.decryptBytes(payload.b().asByteArray(), context(authorizationId));
+        final byte[] plaintext = encryptionService.decryptBytes(
+                item.getPayload().asByteArray(), context(item.getAuthorizationId()));
         return Optional.ofNullable(
                 AuthorizationSerialization.deserialize(plaintext, OAuth2Authorization.class));
     }
@@ -210,24 +205,12 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
     }
 
     private List<String> loadPointerList(String authorizationId) {
-        final GetItemResponse response = client.getItem(GetItemRequest.builder()
-                .tableName(tableName)
-                .key(Map.of(PK, s(OAUTH_PREFIX + authorizationId)))
-                .build());
-        if (!response.hasItem() || response.item().isEmpty()) {
+        final AuthItem item = authTable.getItem(
+                Key.builder().partitionValue(OAUTH_PREFIX + authorizationId).build());
+        if (item == null || item.getTokenPointers() == null) {
             return new ArrayList<>();
         }
-        final AttributeValue pointers = response.item().get(A_POINTERS);
-        if (pointers == null || pointers.l() == null) {
-            return new ArrayList<>();
-        }
-        final List<String> result = new ArrayList<>();
-        for (AttributeValue value : pointers.l()) {
-            if (value.s() != null) {
-                result.add(value.s());
-            }
-        }
-        return result;
+        return new ArrayList<>(item.getTokenPointers());
     }
 
     private static List<String> pointerKeys(OAuth2Authorization authorization) {
@@ -284,14 +267,150 @@ public class DynamoDbAuthorizationStore implements AuthorizationStore {
         return a.isAfter(b) ? a : b;
     }
 
-    private void writeInBatches(List<TransactWriteItem> items) {
-        if (items.isEmpty()) {
+    private void writeInBatches(List<Consumer<TransactWriteItemsEnhancedRequest.Builder>> ops) {
+        if (ops.isEmpty()) {
             return;
         }
-        final int batchSize = 100;
-        for (int i = 0; i < items.size(); i += batchSize) {
-            final List<TransactWriteItem> batch = items.subList(i, Math.min(i + batchSize, items.size()));
-            client.transactWriteItems(TransactWriteItemsRequest.builder().transactItems(batch).build());
+        for (int i = 0; i < ops.size(); i += TRANSACTION_LIMIT) {
+            final List<Consumer<TransactWriteItemsEnhancedRequest.Builder>> batch =
+                    ops.subList(i, Math.min(i + TRANSACTION_LIMIT, ops.size()));
+            final TransactWriteItemsEnhancedRequest.Builder builder =
+                    TransactWriteItemsEnhancedRequest.builder();
+            batch.forEach(op -> op.accept(builder));
+            enhancedClient.transactWriteItems(builder.build());
+        }
+    }
+
+    // ---- item beans ------------------------------------------------------
+
+    /**
+     * The authorization item ({@code oauth#<id>}): the encrypted, JDK-serialized
+     * {@link OAuth2Authorization} payload plus the list of reverse-pointer keys that resolve tokens
+     * back to this authorization.
+     */
+    @DynamoDbBean
+    public static class AuthItem {
+
+        private String pk;
+        private String type;
+        private String authorizationId;
+        private SdkBytes payload;
+        private List<String> tokenPointers;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getPk() {
+            return pk;
+        }
+
+        public void setPk(String pk) {
+            this.pk = pk;
+        }
+
+        @DynamoDbAttribute(TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(AUTHORIZATION_ID)
+        public String getAuthorizationId() {
+            return authorizationId;
+        }
+
+        public void setAuthorizationId(String authorizationId) {
+            this.authorizationId = authorizationId;
+        }
+
+        @DynamoDbAttribute(A_PAYLOAD)
+        public SdkBytes getPayload() {
+            return payload;
+        }
+
+        public void setPayload(SdkBytes payload) {
+            this.payload = payload;
+        }
+
+        @DynamoDbAttribute(A_POINTERS)
+        public List<String> getTokenPointers() {
+            return tokenPointers;
+        }
+
+        public void setTokenPointers(List<String> tokenPointers) {
+            this.tokenPointers = tokenPointers;
+        }
+
+        @DynamoDbAttribute(TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
+        }
+    }
+
+    /**
+     * A reverse token pointer item ({@code oauthtok#<type>#<sha256(value)>}) mapping a hashed token
+     * back to its owning authorization id.
+     */
+    @DynamoDbBean
+    public static class TokenPointerItem {
+
+        private String pk;
+        private String type;
+        private String authorizationId;
+        private String tokenType;
+        private Long ttl;
+
+        @DynamoDbPartitionKey
+        @DynamoDbAttribute(PK)
+        public String getPk() {
+            return pk;
+        }
+
+        public void setPk(String pk) {
+            this.pk = pk;
+        }
+
+        @DynamoDbAttribute(TYPE)
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        @DynamoDbAttribute(AUTHORIZATION_ID)
+        public String getAuthorizationId() {
+            return authorizationId;
+        }
+
+        public void setAuthorizationId(String authorizationId) {
+            this.authorizationId = authorizationId;
+        }
+
+        @DynamoDbAttribute(A_TOKEN_TYPE)
+        public String getTokenType() {
+            return tokenType;
+        }
+
+        public void setTokenType(String tokenType) {
+            this.tokenType = tokenType;
+        }
+
+        @DynamoDbAttribute(TTL)
+        public Long getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(Long ttl) {
+            this.ttl = ttl;
         }
     }
 }
