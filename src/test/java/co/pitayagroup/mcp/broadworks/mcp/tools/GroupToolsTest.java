@@ -67,7 +67,7 @@ class GroupToolsTest {
                      mockConstruction(Group.GroupGetListInServiceProviderRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
-            final Page result = tools.listGroups("sp-1", null, null, null);
+            final Page result = tools.listGroups("sp-1", null, null, null, null, null);
 
             assertThat(result.schema()).containsExactly("groupId", "groupName", "userLimit");
             assertThat(result.rows()).containsExactly(Arrays.asList("grp-1", "Sales", "25"));
@@ -96,7 +96,7 @@ class GroupToolsTest {
                      mockConstruction(Group.GroupGetListInServiceProviderRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
-            final Page result = tools.listGroups("sp-empty", null, null, null);
+            final Page result = tools.listGroups("sp-empty", null, null, null, null, null);
 
             assertThat(result.schema()).containsExactly("groupId", "groupName", "userLimit");
             assertThat(result.rows()).isEmpty();
@@ -106,6 +106,37 @@ class GroupToolsTest {
             assertThat(result.nextCursor()).isNull();
             assertThat(result.truncationReason()).isNull();
             assertThat(result.suggestion()).isNotBlank();
+        }
+    }
+
+    @Test
+    void listGroupsSearchesSystemWideWhenServiceProviderOmitted() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable2Row row =
+                mock(co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable2Row.class);
+        when(row.getGroupId()).thenReturn("grp-sys");
+        when(row.getGroupName()).thenReturn("Sales");
+        when(row.getUserLimit()).thenReturn("10");
+
+        final Group.GroupGetListInSystemResponse response =
+                mock(Group.GroupGetListInSystemResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+        when(response.getGroupTable()).thenReturn(List.of(row));
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedConstruction<Group.GroupGetListInSystemRequest> reqCtor =
+                     mockConstruction(Group.GroupGetListInSystemRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+
+            final Page result = tools.listGroups(null, "sales", null, null, null, null);
+
+            assertThat(result.schema()).containsExactly("groupId", "groupName", "userLimit");
+            assertThat(result.rows()).containsExactly(Arrays.asList("grp-sys", "Sales", "10"));
+            assertThat(result.returned()).isEqualTo(1);
+            assertThat(result.totalMatching()).isEqualTo(1);
+            assertThat(reqCtor.constructed()).hasSize(1);
+            assertThat(spCtor.constructed()).isEmpty();
         }
     }
 

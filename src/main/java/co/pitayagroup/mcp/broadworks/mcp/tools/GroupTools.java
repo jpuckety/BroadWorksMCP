@@ -11,7 +11,10 @@ import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
 import co.ecg.alpaca.toolkit.generated.Group;
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;
+import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaGroupName;
+import co.ecg.alpaca.toolkit.generated.enums.SearchMode;
 import co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable1Row;
+import co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable2Row;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +23,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 /**
- * MCP tools for BroadWorks groups within a service provider, backed by the Alpaca toolkit.
+ * MCP tools for BroadWorks groups (within a service provider or system-wide), backed by the Alpaca toolkit.
  *
  * <p>Operations run against the authenticated user's own BroadWorks connection (resolved by
  * {@code subject}); results are mapped to compact DTOs. No credentials or protocol bodies are
@@ -37,12 +40,25 @@ public class GroupTools {
     private final AlpacaConnectionFactory connectionFactory;
 
     @Tool(name = "broadworks_list_groups",
-            description = "List the groups within a BroadWorks service provider. Results are paginated and "
-                    + "capped server-side (max " + Paging.MAX_PAGE_LIMIT + " per page): pass the returned "
-                    + "next_cursor to fetch the next page and inspect has_more/total_matching to know when to "
-                    + "stop. Rows are returned in a compact columnar form described by the schema field.")
+            description = "List (or search) BroadWorks groups. When a service provider id is supplied the search "
+                    + "is scoped to that service provider; when it is omitted the search spans the entire system "
+                    + "(all service providers). Pass an optional search value to filter by group name. Results "
+                    + "are paginated and capped server-side (max " + Paging.MAX_PAGE_LIMIT + " per page): pass the "
+                    + "returned next_cursor to fetch the next page and inspect has_more/total_matching to know "
+                    + "when to stop. Rows are returned in a compact columnar form described by the schema field.")
     public Page listGroups(
-            @ToolParam(description = "The service provider id whose groups to list") String serviceProviderId,
+            @ToolParam(required = false,
+                    description = "The service provider id whose groups to list. Omit to search groups across "
+                            + "the entire system (all service providers)")
+            String serviceProviderId,
+            @ToolParam(required = false,
+                    description = "Optional case-insensitive filter matched against the group name; omit to "
+                            + "list all")
+            String search,
+            @ToolParam(required = false,
+                    description = "How the search value is matched: STARTSWITH, CONTAINS, or EQUALTO "
+                            + "(default CONTAINS). Ignored when search is omitted")
+            String searchMode,
             @ToolParam(required = false,
                     description = "Opaque pagination cursor returned as next_cursor by a previous call; "
                             + "omit to start from the first page")
@@ -54,34 +70,74 @@ public class GroupTools {
             @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
-        log.debug("tool broadworks_list_groups invoked (serviceProviderId={}, cursor={}, limit={}, resourceId={})",
-                serviceProviderId, cursor, limit, resourceId);
+        log.debug("tool broadworks_list_groups invoked (serviceProviderId={}, search={}, searchMode={}, cursor={}, "
+                        + "limit={}, resourceId={})", serviceProviderId, search, searchMode, cursor, limit, resourceId);
         final int offset = Paging.decodeCursor(cursor);
         final int pageLimit = Paging.effectivePageLimit(limit, GROUP_SCHEMA.size());
+        final SearchMode mode = ServiceProviderTools.searchMode(searchMode);
+        final boolean hasSearch = search != null && !search.isBlank();
+        final boolean systemWide = serviceProviderId == null || serviceProviderId.isBlank();
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
-            final Group.GroupGetListInServiceProviderResponse response =
-                    new Group.GroupGetListInServiceProviderRequest(serviceProvider).fire();
-            ServiceProviderTools.ensureSuccess(response, "list groups");
-            final List<GroupGroupTable1Row> groupTable = response.getGroupTable();
-            final List<GroupSummary> summaries = (groupTable == null ? List.<GroupGroupTable1Row>of() : groupTable)
-                    .stream()
-                    .map(row -> new GroupSummary(row.getGroupId(), row.getGroupName(), row.getUserLimit()))
-                    .toList();
+            final List<GroupSummary> summaries = systemWide
+                    ? searchGroupsInSystem(server, hasSearch, mode, search)
+                    : searchGroupsInServiceProvider(server, serviceProviderId, hasSearch, mode, search);
             final Page page = toPage(summaries, offset, pageLimit);
-            log.debug("tool broadworks_list_groups returning {} of {} group(s) for serviceProviderId={} (hasMore={})",
-                    page.returned(), page.totalMatching(), serviceProviderId, page.hasMore());
+            log.debug("tool broadworks_list_groups returning {} of {} group(s) (serviceProviderId={}, systemWide={}, "
+                            + "hasMore={})", page.returned(), page.totalMatching(), serviceProviderId, systemWide,
+                    page.hasMore());
             return page;
         } catch (AlpacaException ex) {
-            log.warn("tool broadworks_list_groups failed for serviceProviderId={}: {}",
+            log.warn("tool broadworks_list_groups failed (serviceProviderId={}): {}",
                     serviceProviderId, ex.getMessage());
             throw ex;
         } catch (RuntimeException ex) {
-            log.warn("tool broadworks_list_groups failed unexpectedly for serviceProviderId={}: {}",
+            log.warn("tool broadworks_list_groups failed unexpectedly (serviceProviderId={}): {}",
                     serviceProviderId, ex.getMessage());
-            throw new AlpacaException("Failed to list groups in service provider " + serviceProviderId, ex);
+            throw new AlpacaException(systemWide
+                    ? "Failed to list groups in system"
+                    : "Failed to list groups in service provider " + serviceProviderId, ex);
         }
+    }
+
+    /**
+     * Searches the groups within a single service provider via {@code GroupGetListInServiceProviderRequest},
+     * optionally filtering by group name.
+     */
+    private static List<GroupSummary> searchGroupsInServiceProvider(
+            BroadWorksServer server, String serviceProviderId, boolean hasSearch, SearchMode mode, String search) {
+        final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
+        final Group.GroupGetListInServiceProviderRequest request =
+                new Group.GroupGetListInServiceProviderRequest(serviceProvider);
+        if (hasSearch) {
+            request.setSearchCriteriaGroupName(new SearchCriteriaGroupName(mode, search.trim(), true));
+        }
+        final Group.GroupGetListInServiceProviderResponse response = request.fire();
+        ServiceProviderTools.ensureSuccess(response, "list groups");
+        final List<GroupGroupTable1Row> groupTable = response.getGroupTable();
+        return (groupTable == null ? List.<GroupGroupTable1Row>of() : groupTable)
+                .stream()
+                .map(row -> new GroupSummary(row.getGroupId(), row.getGroupName(), row.getUserLimit()))
+                .toList();
+    }
+
+    /**
+     * Searches groups across the entire system (all service providers) via {@code GroupGetListInSystemRequest},
+     * optionally filtering by group name.
+     */
+    private static List<GroupSummary> searchGroupsInSystem(
+            BroadWorksServer server, boolean hasSearch, SearchMode mode, String search) {
+        final Group.GroupGetListInSystemRequest request = new Group.GroupGetListInSystemRequest(server);
+        if (hasSearch) {
+            request.setSearchCriteriaGroupName(new SearchCriteriaGroupName(mode, search.trim(), true));
+        }
+        final Group.GroupGetListInSystemResponse response = request.fire();
+        ServiceProviderTools.ensureSuccess(response, "list groups in system");
+        final List<GroupGroupTable2Row> groupTable = response.getGroupTable();
+        return (groupTable == null ? List.<GroupGroupTable2Row>of() : groupTable)
+                .stream()
+                .map(row -> new GroupSummary(row.getGroupId(), row.getGroupName(), row.getUserLimit()))
+                .toList();
     }
 
     /**

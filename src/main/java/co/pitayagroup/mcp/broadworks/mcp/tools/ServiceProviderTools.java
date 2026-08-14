@@ -10,6 +10,8 @@ import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 
 import co.ecg.alpaca.toolkit.exception.BroadWorksObjectException;
 import co.ecg.alpaca.toolkit.generated.ServiceProvider;
+import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaServiceProviderName;
+import co.ecg.alpaca.toolkit.generated.enums.SearchMode;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
 import co.ecg.alpaca.toolkit.messaging.response.Response;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
@@ -38,8 +40,9 @@ public class ServiceProviderTools {
     private final AlpacaConnectionFactory connectionFactory;
 
     @Tool(name = "broadworks_list_service_providers",
-            description = "List the BroadWorks service providers (and enterprises) accessible to the "
-                    + "authenticated user. Results are paginated and capped server-side (max "
+            description = "List (or search) the BroadWorks service providers (and enterprises) accessible to "
+                    + "the authenticated user. Pass an optional search value to filter by service provider name. "
+                    + "Results are paginated and capped server-side (max "
                     + Paging.MAX_PAGE_LIMIT + " per page): pass the returned next_cursor to fetch the next page "
                     + "and inspect has_more/total_matching to know when to stop. Rows are returned in a "
                     + "compact columnar form described by the schema field.")
@@ -53,16 +56,29 @@ public class ServiceProviderTools {
                             + Paging.MAX_PAGE_LIMIT + "; defaults to " + Paging.DEFAULT_PAGE_LIMIT + " when omitted")
             Integer limit,
             @ToolParam(required = false,
+                    description = "Optional case-insensitive filter matched against the service provider name; "
+                            + "omit to list all")
+            String search,
+            @ToolParam(required = false,
+                    description = "How the search value is matched: STARTSWITH, CONTAINS, or EQUALTO "
+                            + "(default CONTAINS). Ignored when search is omitted")
+            String searchMode,
+            @ToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
-        log.debug("tool broadworks_list_service_providers invoked (cursor={}, limit={}, resourceId={})",
-                cursor, limit, resourceId);
+        log.debug("tool broadworks_list_service_providers invoked (cursor={}, limit={}, search={}, searchMode={}, "
+                        + "resourceId={})", cursor, limit, search, searchMode, resourceId);
         final int offset = Paging.decodeCursor(cursor);
         final int pageLimit = Paging.effectivePageLimit(limit, SERVICE_PROVIDER_SCHEMA.size());
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider.ServiceProviderGetListResponse response =
-                    new ServiceProvider.ServiceProviderGetListRequest(server).fire();
+            final ServiceProvider.ServiceProviderGetListRequest request =
+                    new ServiceProvider.ServiceProviderGetListRequest(server);
+            if (search != null && !search.isBlank()) {
+                request.setSearchCriteriaServiceProviderName(
+                        new SearchCriteriaServiceProviderName(searchMode(searchMode), search.trim(), true));
+            }
+            final ServiceProvider.ServiceProviderGetListResponse response = request.fire();
             ensureSuccess(response, "list service providers");
             final List<ServiceProviderServiceProviderTableRow> serviceProviderTable = response.getServiceProviderTable();
             final List<ServiceProviderSummary> summaries =
@@ -138,6 +154,24 @@ public class ServiceProviderTools {
         if (response.isErrorResponse()) {
             throw new AlpacaException("BroadWorks failed to " + action
                     + " (error code " + response.getErrorCode() + ")");
+        }
+    }
+
+    /**
+     * Parses a user-supplied search mode into the Alpaca {@link SearchMode} enum, defaulting to
+     * {@link SearchMode#CONTAINS} when blank. Matching is case-insensitive.
+     *
+     * @throws AlpacaException if {@code mode} is not one of STARTSWITH, CONTAINS, or EQUALTO.
+     */
+    static SearchMode searchMode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return SearchMode.CONTAINS;
+        }
+        try {
+            return SearchMode.valueOf(mode.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            throw new AlpacaException("Invalid searchMode '" + mode
+                    + "'; expected one of STARTSWITH, CONTAINS, EQUALTO");
         }
     }
 }

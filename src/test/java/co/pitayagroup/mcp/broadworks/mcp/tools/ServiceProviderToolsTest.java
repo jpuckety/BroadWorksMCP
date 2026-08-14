@@ -73,7 +73,7 @@ class ServiceProviderToolsTest {
                      mockConstruction(ServiceProvider.ServiceProviderGetListRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
-            final Page result = tools.listServiceProviders(null, null, "res-1");
+            final Page result = tools.listServiceProviders(null, null, null, null, "res-1");
 
             assertThat(result.schema())
                     .containsExactly("serviceProviderId", "serviceProviderName", "enterprise", "resellerId");
@@ -101,7 +101,7 @@ class ServiceProviderToolsTest {
                      mockConstruction(ServiceProvider.ServiceProviderGetListRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
-            final Page result = tools.listServiceProviders(null, null, null);
+            final Page result = tools.listServiceProviders(null, null, null, null, null);
 
             assertThat(result.rows()).isEmpty();
             assertThat(result.returned()).isZero();
@@ -126,7 +126,7 @@ class ServiceProviderToolsTest {
                      mockConstruction(ServiceProvider.ServiceProviderGetListRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
-            assertThatThrownBy(() -> tools.listServiceProviders(null, null, null))
+            assertThatThrownBy(() -> tools.listServiceProviders(null, null, null, null, null))
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("list service providers");
         }
@@ -156,9 +156,42 @@ class ServiceProviderToolsTest {
     @Test
     void failsWhenNoAuthenticatedUser() {
         SecurityContextHolder.clearContext();
-        assertThatThrownBy(() -> tools.listServiceProviders(null, null, null))
+        assertThatThrownBy(() -> tools.listServiceProviders(null, null, null, null, null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("No authenticated user");
+    }
+
+    @Test
+    void listServiceProvidersAppliesNameSearchCriteria() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider.ServiceProviderGetListResponse response =
+                mock(ServiceProvider.ServiceProviderGetListResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+        when(response.getServiceProviderTable()).thenReturn(List.of());
+
+        try (MockedConstruction<ServiceProvider.ServiceProviderGetListRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderGetListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+
+            tools.listServiceProviders(null, null, "acme", "STARTSWITH", null);
+
+            org.mockito.Mockito.verify(mocked.constructed().get(0))
+                    .setSearchCriteriaServiceProviderName(any());
+        }
+    }
+
+    @Test
+    void listServiceProvidersRejectsInvalidSearchMode() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        try (MockedConstruction<ServiceProvider.ServiceProviderGetListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderGetListRequest.class)) {
+
+            assertThatThrownBy(() -> tools.listServiceProviders(null, null, "acme", "BOGUS", null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("Invalid searchMode");
+        }
     }
 
     @Test
