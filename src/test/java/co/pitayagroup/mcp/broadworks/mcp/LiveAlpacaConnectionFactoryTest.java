@@ -3,7 +3,6 @@ package co.pitayagroup.mcp.broadworks.mcp;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -22,8 +21,7 @@ import org.springframework.beans.factory.ObjectProvider;
  * Verifies the live factory's contract without a real BroadWorks server. {@link BroadWorksServer}
  * itself is intentionally never mocked (it is {@code AutoCloseable} and cannot be instrumented here,
  * which is why the tool tests mock the request/response types instead), so the new behaviour is
- * exercised through the resource-to-config mapping, the early login-type validation, and the
- * fail-safe error path.
+ * exercised through the resource-to-config mapping and the fail-safe error path.
  */
 class LiveAlpacaConnectionFactoryTest {
 
@@ -40,7 +38,7 @@ class LiveAlpacaConnectionFactoryTest {
     }
 
     private AlpacaResource resource(String id) {
-        return new AlpacaResource(id, "Display", "as.example.com", 2208, "SYSTEM", "admin", "pw", false);
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "admin", "pw", false);
     }
 
     @Test
@@ -52,18 +50,6 @@ class LiveAlpacaConnectionFactoryTest {
         assertThat(config.getPort()).isEqualTo(2208);
         assertThat(config.getUsername()).isEqualTo("admin");
         assertThat(config.getPassword()).isEqualTo("pw");
-    }
-
-    @Test
-    void rejectsInvalidLoginTypeBeforeOpeningConnection() {
-        resourceStore.put("sub-1", new AlpacaResource("res-1", "Display", "as.example.com", 2208,
-                "NOPE", "admin", "pw", false));
-
-        assertThatThrownBy(() -> factory.connect("sub-1", null))
-                .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("Unsupported BroadWorks login type");
-        // Validation fails fast: no toolkit connection object is ever acquired.
-        verify(serverProvider, never()).getObject();
     }
 
     @Test

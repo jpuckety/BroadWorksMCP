@@ -51,36 +51,36 @@ class ConnectionToolsTest {
     @Test
     void addConnectionPersistsResourcePasswordlessAndFlagsNeedsPassword() {
         final ConnectionSummary summary = tools.addConnection(
-                "ECG Production", "portal.vwave.net", 2208, "jpuckett", null, null, null);
+                "ECG Production", "portal.vwave.net", 2208, "jpuckett", null, null);
 
         assertThat(summary.resourceId()).isEqualTo("ecg-production");
         assertThat(summary.displayName()).isEqualTo("ECG Production");
         assertThat(summary.hostname()).isEqualTo("portal.vwave.net");
         assertThat(summary.port()).isEqualTo(2208);
         assertThat(summary.username()).isEqualTo("jpuckett");
-        assertThat(summary.loginType()).isEqualTo("SYSTEM");
         assertThat(summary.usePrivateApplicationServerAddress()).isFalse();
         // The tool never collects a password, so the stored connection needs one set in the portal.
         assertThat(summary.needsPassword()).isTrue();
 
         final AlpacaResource stored = resourceStore.get("sub-1", "ecg-production").orElseThrow();
-        assertThat(stored.password()).isEmpty();
+        // The password is stored as null (absent), not an empty string, so the encryption layer skips
+        // it (KMS rejects zero-length plaintext).
+        assertThat(stored.password()).isNull();
     }
 
     @Test
-    void addConnectionHonoursExplicitResourceIdLoginTypeAndPrivateAddress() {
+    void addConnectionHonoursExplicitResourceIdAndPrivateAddress() {
         final ConnectionSummary summary = tools.addConnection(
-                "Lab", "lab.example.com", 2208, "admin", "provisioning", Boolean.TRUE, "custom-id");
+                "Lab", "lab.example.com", 2208, "admin", Boolean.TRUE, "custom-id");
 
         assertThat(summary.resourceId()).isEqualTo("custom-id");
-        assertThat(summary.loginType()).isEqualTo("PROVISIONING");
         assertThat(summary.usePrivateApplicationServerAddress()).isTrue();
     }
 
     @Test
     void listConnectionsReturnsOnlyCurrentUserResourcesWithoutSecret() {
-        tools.addConnection("Prod", "prod.example.com", 2208, "admin", null, null, null);
-        tools.addConnection("Lab", "lab.example.com", 2208, "admin", null, null, null);
+        tools.addConnection("Prod", "prod.example.com", 2208, "admin", null, null);
+        tools.addConnection("Lab", "lab.example.com", 2208, "admin", null, null);
 
         final List<ConnectionSummary> connections = tools.listConnections();
 
@@ -92,7 +92,7 @@ class ConnectionToolsTest {
 
     @Test
     void deleteConnectionRemovesResource() {
-        tools.addConnection("Prod", "prod.example.com", 2208, "admin", null, null, null);
+        tools.addConnection("Prod", "prod.example.com", 2208, "admin", null, null);
 
         final String message = tools.deleteConnection("prod");
 
@@ -103,17 +103,17 @@ class ConnectionToolsTest {
     @Test
     void addConnectionValidatesRequiredFields() {
         assertThatThrownBy(() ->
-                tools.addConnection("Prod", "  ", 2208, "admin", null, null, null))
+                tools.addConnection("Prod", "  ", 2208, "admin", null, null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("hostname");
 
         assertThatThrownBy(() ->
-                tools.addConnection("Prod", "prod.example.com", 0, "admin", null, null, null))
+                tools.addConnection("Prod", "prod.example.com", 0, "admin", null, null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("port");
 
         assertThatThrownBy(() ->
-                tools.addConnection("Prod", "prod.example.com", 2208, "", null, null, null))
+                tools.addConnection("Prod", "prod.example.com", 2208, "", null, null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("username");
     }
@@ -125,7 +125,7 @@ class ConnectionToolsTest {
         for (String blocked : List.of("127.0.0.1", "localhost", "169.254.169.254", "10.1.2.3",
                 "192.168.0.1", "metadata.google.internal", "0.0.0.0")) {
             assertThatThrownBy(() ->
-                    guarded.addConnection("Evil", blocked, 2208, "admin", null, null, null))
+                    guarded.addConnection("Evil", blocked, 2208, "admin", null, null))
                     .isInstanceOf(AlpacaException.class)
                     .hasMessage("hostname is not a permitted BroadWorks connection target");
         }

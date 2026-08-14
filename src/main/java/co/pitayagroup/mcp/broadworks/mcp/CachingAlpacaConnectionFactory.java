@@ -13,7 +13,6 @@ import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
 import co.pitayagroup.mcp.broadworks.config.AlpacaProperties;
 
 import co.ecg.alpaca.toolkit.LibraryProperties;
-import co.ecg.alpaca.toolkit.model.BroadWorksLoginType;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import co.ecg.licensing.ECGLicense;
 import lombok.RequiredArgsConstructor;
@@ -95,9 +94,9 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
      */
     protected BroadWorksServer login(AlpacaResource resource) {
         buildServerConfig(resource);
-        log.info("BroadWorks resource host={} loginType={} is configured, but live login is disabled "
+        log.info("BroadWorks resource host={} is configured, but live login is disabled "
                         + "(broadworks.alpaca.live=false / ALPACA_LIVE=false)",
-                resource.hostname(), resource.loginType());
+                resource.hostname());
         throw new AlpacaException(
                 "Live BroadWorks connectivity is disabled (broadworks.alpaca.live=false). "
                         + "Runtime defaults to live login; unset ALPACA_LIVE or set it to true, "
@@ -107,8 +106,7 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
 
     /**
      * Maps the per-tenant {@link AlpacaResource} onto the toolkit's {@code BroadWorksServerConfig}
-     * and validates the configured login type early (no secrets are logged). Shared by the default
-     * factory and the live override.
+     * (no secrets are logged). Shared by the default factory and the live override.
      */
     protected LibraryProperties.BroadWorksServerConfig buildServerConfig(AlpacaResource resource) {
         final LibraryProperties.BroadWorksServerConfig config = new LibraryProperties.BroadWorksServerConfig();
@@ -118,8 +116,6 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         config.setUsername(resource.username());
         config.setPassword(resource.password());
         config.setUsePrivateApplicationServerAddress(resource.usePrivateApplicationServerAddress());
-        // Validate the configured login type early (a bad value fails fast with a safe message).
-        parseLoginType(resource.loginType());
         return config;
     }
 
@@ -148,17 +144,6 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
         }
         log.info("Loaded Alpaca license from configured key (company={}, validUntil={})",
                 license.getCompany(), license.getValidUntil());
-    }
-
-    protected static BroadWorksLoginType parseLoginType(String loginType) {
-        if (loginType == null || loginType.isBlank()) {
-            return BroadWorksLoginType.SYSTEM;
-        }
-        try {
-            return BroadWorksLoginType.valueOf(loginType.trim().toUpperCase(java.util.Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            throw new AlpacaException("Unsupported BroadWorks login type: " + loginType);
-        }
     }
 
     /** A cached connection with the instant it was established. */

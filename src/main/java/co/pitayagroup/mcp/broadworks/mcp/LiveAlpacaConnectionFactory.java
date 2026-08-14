@@ -42,8 +42,7 @@ public class LiveAlpacaConnectionFactory extends CachingAlpacaConnectionFactory 
         try {
             // connect() opens the OCI socket and performs the login using the credentials in config.
             server.connect(config);
-            log.info("Established live BroadWorks connection to host={} loginType={}",
-                    resource.hostname(), server.getLoginType());
+            log.info("Established live BroadWorks connection to host={}", resource.hostname());
             return server;
         } catch (AlpacaException ex) {
             closeQuietly(server);

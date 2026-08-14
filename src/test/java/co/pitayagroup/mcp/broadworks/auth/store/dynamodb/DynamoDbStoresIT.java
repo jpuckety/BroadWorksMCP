@@ -233,9 +233,9 @@ class DynamoDbStoresIT {
         final DynamoDbResourceStore store =
                 new DynamoDbResourceStore(dynamo, USER_CONFIG_TABLE, APPLICATION_ID, encryptionService);
 
-        store.put("sub-a", new AlpacaResource("res-1", "A", "host-a", 2208, "SYSTEM", "admin", "pw-a", false));
-        store.put("sub-a", new AlpacaResource("res-2", "A2", "host-a2", 2208, "SYSTEM", "admin", "pw-a2", true));
-        store.put("sub-b", new AlpacaResource("res-1", "B", "host-b", 2208, "GROUP", "user", "pw-b", false));
+        store.put("sub-a", new AlpacaResource("res-1", "A", "host-a", 2208, "admin", "pw-a", false));
+        store.put("sub-a", new AlpacaResource("res-2", "A2", "host-a2", 2208, "admin", "pw-a2", true));
+        store.put("sub-b", new AlpacaResource("res-1", "B", "host-b", 2208, "user", "pw-b", false));
 
         assertThat(store.get("sub-a", "res-1")).isPresent()
                 .get().extracting(AlpacaResource::password).isEqualTo("pw-a");

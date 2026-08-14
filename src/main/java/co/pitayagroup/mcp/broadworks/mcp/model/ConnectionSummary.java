@@ -10,7 +10,6 @@ package co.pitayagroup.mcp.broadworks.mcp.model;
  * @param displayName                        human-friendly name / nickname.
  * @param hostname                           BroadWorks OCI host.
  * @param port                               BroadWorks OCI port.
- * @param loginType                          toolkit login type (e.g. {@code SYSTEM}).
  * @param username                           BroadWorks login user.
  * @param usePrivateApplicationServerAddress whether to use the private AS address.
  * @param needsPassword                      whether this connection still needs a password set in
@@ -22,7 +21,6 @@ public record ConnectionSummary(
         String displayName,
         String hostname,
         int port,
-        String loginType,
         String username,
         boolean usePrivateApplicationServerAddress,
         boolean needsPassword
@@ -37,7 +35,6 @@ public record ConnectionSummary(
                 resource.displayName(),
                 resource.hostname(),
                 resource.port(),
-                resource.loginType(),
                 resource.username(),
                 resource.usePrivateApplicationServerAddress(),
                 resource.password() == null || resource.password().isBlank());

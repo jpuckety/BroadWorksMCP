@@ -29,7 +29,7 @@ import { ConnectionsService } from './connections.service';
         <table class="grid">
           <thead>
             <tr>
-              <th>Name</th><th>Host</th><th>Port</th><th>User</th><th>Login type</th>
+              <th>Name</th><th>Host</th><th>Port</th><th>User</th>
               <th>Status</th><th class="actions">Actions</th>
             </tr>
           </thead>
@@ -40,7 +40,6 @@ import { ConnectionsService } from './connections.service';
                 <td>{{ c.hostname }}</td>
                 <td>{{ c.port }}</td>
                 <td>{{ c.username }}</td>
-                <td>{{ c.loginType }}</td>
                 <td>
                   @if (c.needsPassword) {
                     <span class="badge warn">Needs password</span>

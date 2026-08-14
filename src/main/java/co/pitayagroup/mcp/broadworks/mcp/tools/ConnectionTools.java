@@ -31,8 +31,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class ConnectionTools {
 
-    private static final String DEFAULT_LOGIN_TYPE = "SYSTEM";
-
     private final ResourceStore resourceStore;
     private final HostAllowlist hostAllowlist;
 
@@ -64,9 +62,11 @@ public class ConnectionTools {
 
     @Tool(name = "broadworks_add_connection",
             description = "Add (or replace) a BroadWorks server connection for the authenticated user. "
-                    + "This tool never accepts or stores a password: the connection is saved without one "
-                    + "and cannot be used until the user sets the password in the web portal. After calling "
-                    + "this, tell the user to open the web portal and set the password for the connection. "
+                    + "IMPORTANT: Do NOT ask the user for a password and do NOT attempt to provide, "
+                    + "include, or pass a password to this tool. This tool never accepts or stores a "
+                    + "password: the connection is saved without one and cannot be used until the user "
+                    + "sets the password in the web portal. After calling this, tell the user to open the "
+                    + "web portal and set the password for the connection. "
                     + "Returns a summary of the stored connection (needsPassword=true until the password is set).")
     public ConnectionSummary addConnection(
             @ToolParam(description = "Human-friendly name / nickname for the connection, e.g. 'ECG Production'")
@@ -75,9 +75,6 @@ public class ConnectionTools {
             String hostname,
             @ToolParam(description = "BroadWorks OCI port, e.g. 2208") int port,
             @ToolParam(description = "BroadWorks login username") String username,
-            @ToolParam(required = false,
-                    description = "Login type: SYSTEM, PROVISIONING, or SERVICEPROVIDER (defaults to SYSTEM)")
-            String loginType,
             @ToolParam(required = false,
                     description = "Whether to use the private application server address (defaults to false)")
             Boolean usePrivateApplicationServerAddress,
@@ -88,33 +85,32 @@ public class ConnectionTools {
         final String subject = currentSubject();
         // Log non-secret parameters only. No password is accepted by this tool.
         log.debug("tool broadworks_add_connection invoked (displayName={}, host={}, port={}, username={}, "
-                        + "loginType={}, resourceId={})",
-                displayName, hostname, port, username, loginType, resourceId);
+                        + "resourceId={})",
+                displayName, hostname, port, username, resourceId);
 
         ConnectionValidation.validate(hostAllowlist, hostname, port, username);
 
         final String effectiveResourceId = resolveResourceId(resourceId, displayName);
         final String effectiveDisplayName = (displayName == null || displayName.isBlank())
                 ? effectiveResourceId : displayName;
-        final String effectiveLoginType = (loginType == null || loginType.isBlank())
-                ? DEFAULT_LOGIN_TYPE : loginType.trim().toUpperCase(Locale.ROOT);
         final boolean privateAddress = Boolean.TRUE.equals(usePrivateApplicationServerAddress);
 
         // No password is collected here: the connection is stored password-less and must be finished
-        // in the web portal. An empty password is what marks the connection as needing one.
+        // in the web portal. The password is left null (not an empty string) so the encryption layer
+        // skips it entirely -- an empty string would be rejected by KMS, which will not encrypt a
+        // zero-length value. A null/blank password is what marks the connection as needing one.
         final AlpacaResource resource = new AlpacaResource(
                 effectiveResourceId,
                 effectiveDisplayName,
                 hostname.trim(),
                 port,
-                effectiveLoginType,
                 username,
-                "",
+                null,
                 privateAddress);
         resourceStore.put(subject, resource);
-        log.info("Stored BroadWorks connection resourceId={} host={} loginType={} (no password yet; "
+        log.info("Stored BroadWorks connection resourceId={} host={} (no password yet; "
                         + "user must set it in the web portal)",
-                effectiveResourceId, resource.hostname(), effectiveLoginType);
+                effectiveResourceId, resource.hostname());
         return ConnectionSummary.from(resource);
     }
 

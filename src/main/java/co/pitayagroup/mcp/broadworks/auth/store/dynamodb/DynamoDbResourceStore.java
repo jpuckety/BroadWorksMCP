@@ -44,7 +44,6 @@ public class DynamoDbResourceStore implements ResourceStore {
     private static final String A_DISPLAY_NAME = "displayName";
     private static final String A_HOSTNAME = "hostname";
     private static final String A_PORT = "port";
-    private static final String A_LOGIN_TYPE = "loginType";
     private static final String A_USERNAME = "username";
     private static final String A_PASSWORD = "password";
     private static final String A_USE_PRIVATE_AS = "usePrivateApplicationServerAddress";
@@ -92,7 +91,6 @@ public class DynamoDbResourceStore implements ResourceStore {
         item.setDisplayName(resource.displayName());
         item.setHostname(resource.hostname());
         item.setPort(resource.port());
-        item.setLoginType(resource.loginType());
         item.setUsername(resource.username());
         // Encrypt the secret before persisting, bound to this application/subject/resource.
         item.setPassword(encryptionService.encrypt(resource.password(),
@@ -122,7 +120,6 @@ public class DynamoDbResourceStore implements ResourceStore {
                 item.getDisplayName(),
                 item.getHostname(),
                 item.getPort(),
-                item.getLoginType(),
                 item.getUsername(),
                 encryptionService.decrypt(item.getPassword(),
                         EncryptionContext.forResource(applicationId, subject, resourceId)),
@@ -144,7 +141,6 @@ public class DynamoDbResourceStore implements ResourceStore {
         private String displayName;
         private String hostname;
         private int port;
-        private String loginType;
         private String username;
         private String password;
         private boolean usePrivateApplicationServerAddress;
@@ -203,15 +199,6 @@ public class DynamoDbResourceStore implements ResourceStore {
 
         public void setPort(int port) {
             this.port = port;
-        }
-
-        @DynamoDbAttribute(A_LOGIN_TYPE)
-        public String getLoginType() {
-            return loginType;
-        }
-
-        public void setLoginType(String loginType) {
-            this.loginType = loginType;
         }
 
         @DynamoDbAttribute(A_USERNAME)

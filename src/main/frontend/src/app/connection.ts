@@ -4,7 +4,6 @@ export interface ConnectionResponse {
   displayName: string;
   hostname: string;
   port: number;
-  loginType: string;
   username: string;
   usePrivateApplicationServerAddress: boolean;
   needsPassword: boolean;
@@ -16,7 +15,6 @@ export interface ConnectionRequest {
   hostname: string;
   port: number;
   username: string;
-  loginType?: string;
   usePrivateApplicationServerAddress: boolean;
   password?: string;
 }

@@ -11,8 +11,6 @@ package co.pitayagroup.mcp.broadworks.auth.store;
  * @param displayName                      human-friendly name / nickname.
  * @param hostname                         BroadWorks OCI host.
  * @param port                             BroadWorks OCI port.
- * @param loginType                        toolkit login type (e.g. {@code SYSTEM},
- *                                         {@code PROVISIONING}, {@code SERVICEPROVIDER}).
  * @param username                         BroadWorks login user.
  * @param password                         BroadWorks login password (secret, encrypted at rest).
  * @param usePrivateApplicationServerAddress whether to use the private AS address.
@@ -22,7 +20,6 @@ public record AlpacaResource(
         String displayName,
         String hostname,
         int port,
-        String loginType,
         String username,
         String password,
         boolean usePrivateApplicationServerAddress
@@ -38,7 +35,7 @@ public record AlpacaResource(
      * plaintext and encrypted representations without mutating the original).
      */
     public AlpacaResource withPassword(String newPassword) {
-        return new AlpacaResource(resourceId, displayName, hostname, port, loginType, username,
+        return new AlpacaResource(resourceId, displayName, hostname, port, username,
                 newPassword, usePrivateApplicationServerAddress);
     }
 }

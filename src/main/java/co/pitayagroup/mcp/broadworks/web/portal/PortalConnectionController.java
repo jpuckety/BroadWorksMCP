@@ -44,8 +44,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/portal/connections")
 public class PortalConnectionController {
 
-    private static final String DEFAULT_LOGIN_TYPE = "SYSTEM";
-
     private final ResourceStore resourceStore;
     private final HostAllowlist hostAllowlist;
 
@@ -84,7 +82,6 @@ public class PortalConnectionController {
                 displayName,
                 request.hostname().trim(),
                 request.port(),
-                normalizeLoginType(request.loginType()),
                 request.username(),
                 password,
                 Boolean.TRUE.equals(request.usePrivateApplicationServerAddress()));
@@ -112,7 +109,6 @@ public class PortalConnectionController {
                 displayName,
                 request.hostname().trim(),
                 request.port(),
-                normalizeLoginType(request.loginType()),
                 request.username(),
                 password,
                 Boolean.TRUE.equals(request.usePrivateApplicationServerAddress()));
@@ -131,7 +127,6 @@ public class PortalConnectionController {
                 existing.displayName(),
                 existing.hostname(),
                 existing.port(),
-                existing.loginType(),
                 existing.username(),
                 request.password(),
                 existing.usePrivateApplicationServerAddress());
@@ -161,11 +156,6 @@ public class PortalConnectionController {
         return resourceStore.get(subject, id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "No such connection: " + id));
-    }
-
-    private static String normalizeLoginType(String loginType) {
-        return (loginType == null || loginType.isBlank())
-                ? DEFAULT_LOGIN_TYPE : loginType.trim().toUpperCase(Locale.ROOT);
     }
 
     private static String deriveResourceId(String displayName) {

@@ -40,14 +40,6 @@ import { ConnectionsService } from './connections.service';
           <span>Username</span>
           <input type="text" formControlName="username" autocomplete="off" />
         </label>
-        <label>
-          <span>Login type</span>
-          <select formControlName="loginType">
-            <option value="SYSTEM">SYSTEM</option>
-            <option value="PROVISIONING">PROVISIONING</option>
-            <option value="SERVICEPROVIDER">SERVICEPROVIDER</option>
-          </select>
-        </label>
         <label class="checkbox">
           <input type="checkbox" formControlName="usePrivateApplicationServerAddress" />
           <span>Use private application server address</span>
@@ -84,7 +76,6 @@ export class ConnectionFormComponent {
     hostname: ['', Validators.required],
     port: [2208, [Validators.required, Validators.min(1), Validators.max(65535)]],
     username: ['', Validators.required],
-    loginType: ['SYSTEM'],
     usePrivateApplicationServerAddress: [false],
     password: ['']
   });
@@ -97,7 +88,6 @@ export class ConnectionFormComponent {
           hostname: c.hostname,
           port: c.port,
           username: c.username,
-          loginType: c.loginType,
           usePrivateApplicationServerAddress: c.usePrivateApplicationServerAddress,
           password: ''
         }),
@@ -119,7 +109,6 @@ export class ConnectionFormComponent {
       hostname: value.hostname,
       port: value.port,
       username: value.username,
-      loginType: value.loginType,
       usePrivateApplicationServerAddress: value.usePrivateApplicationServerAddress,
       password: value.password ? value.password : undefined
     };
