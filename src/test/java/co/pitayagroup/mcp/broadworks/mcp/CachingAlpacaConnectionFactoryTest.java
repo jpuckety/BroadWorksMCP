@@ -25,6 +25,10 @@ class CachingAlpacaConnectionFactoryTest {
         return new AlpacaResource(id, "Display", "as.example.com", 2208, "SYSTEM", "admin", "pw", false);
     }
 
+    private AlpacaResource passwordlessResource(String id) {
+        return new AlpacaResource(id, "Display", "as.example.com", 2208, "SYSTEM", "admin", "", false);
+    }
+
     @Test
     void failsCleanlyWhenNoResourceConfigured() {
         assertThatThrownBy(() -> factory.connect("sub-1", null))
@@ -55,6 +59,29 @@ class CachingAlpacaConnectionFactoryTest {
 
         // Per-tenant resolution and config mapping succeed; this non-live base class never
         // opens an OCI session (runtime uses LiveAlpacaConnectionFactory instead).
+        assertThatThrownBy(() -> factory.connect("sub-1", null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Live BroadWorks connectivity is disabled");
+    }
+
+    @Test
+    void refusesBlankPasswordAndPointsToPortal() {
+        resourceStore.put("sub-1", passwordlessResource("res-1"));
+
+        // A connection with no password yet must fail fast before any login attempt, with a
+        // secret-free message that sends the user to the web portal.
+        assertThatThrownBy(() -> factory.connect("sub-1", null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("no password yet")
+                .hasMessageContaining("web portal");
+    }
+
+    @Test
+    void proceedsPastGuardWhenPasswordIsSet() {
+        resourceStore.put("sub-1", resource("res-1"));
+
+        // With a password set, the blank-password guard does not fire; this non-live base class then
+        // reports that live login is disabled (i.e. it got past the guard).
         assertThatThrownBy(() -> factory.connect("sub-1", null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("Live BroadWorks connectivity is disabled");

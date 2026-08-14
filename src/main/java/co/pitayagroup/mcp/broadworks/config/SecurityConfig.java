@@ -1,6 +1,7 @@
 package co.pitayagroup.mcp.broadworks.config;
 
 import co.pitayagroup.mcp.broadworks.auth.oauth.BearerChallengeEntryPoint;
+import co.pitayagroup.mcp.broadworks.auth.oauth.VerifiedEmailOidcUserService;
 import co.pitayagroup.mcp.broadworks.auth.session.StoreOpaqueTokenIntrospector;
 import co.pitayagroup.mcp.broadworks.auth.store.SessionStore;
 
@@ -16,13 +17,10 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.FactorGrantedAuthority;
 import org.springframework.security.core.authority.mapping.GrantedAuthoritiesMapper;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
-import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
-import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
-import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.oauth2.server.resource.introspection.OpaqueTokenIntrospector;
 import org.springframework.security.web.SecurityFilterChain;
@@ -139,19 +137,11 @@ public class SecurityConfig {
     }
 
     /**
-     * Rejects Google logins when {@code email_verified} is not {@code true}.
+     * Rejects Google logins when {@code email_verified} is not {@code true}. Shared with the web-portal
+     * chain via {@link VerifiedEmailOidcUserService}.
      */
     private OAuth2UserService<OidcUserRequest, OidcUser> oidcUserService() {
-        final OidcUserService delegate = new OidcUserService();
-        return userRequest -> {
-            final OidcUser oidcUser = delegate.loadUser(userRequest);
-            if (!Boolean.TRUE.equals(oidcUser.getEmailVerified())) {
-                throw new OAuth2AuthenticationException(
-                        new OAuth2Error("email_not_verified"),
-                        "Identity verification failed: your Google email address is not verified.");
-            }
-            return oidcUser;
-        };
+        return VerifiedEmailOidcUserService.create();
     }
 
     @Bean

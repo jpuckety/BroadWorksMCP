@@ -45,12 +45,22 @@ public class CachingAlpacaConnectionFactory implements AlpacaConnectionFactory {
     private final ConcurrentMap<String, CachedConnection> cache = new ConcurrentHashMap<>();
     private final AtomicBoolean licenseApplied = new AtomicBoolean(false);
 
+    /**
+     * Message returned when a resolved connection has no password yet. Points the user to the web
+     * portal (where passwords are set out-of-band from the AI agent) and never contains any secret.
+     */
+    static final String NEEDS_PASSWORD_MESSAGE =
+            "This BroadWorks connection has no password yet \u2014 set it in the web portal before using it.";
+
     @Override
     public BroadWorksServer connect(String subject, String resourceId) {
         if (subject == null || subject.isBlank()) {
             throw new AlpacaException("No authenticated user in context");
         }
         final AlpacaResource resource = resolveResource(subject, resourceId);
+        if (resource.password() == null || resource.password().isBlank()) {
+            throw new AlpacaException(NEEDS_PASSWORD_MESSAGE);
+        }
         final String key = subject + "#" + resource.resourceId();
 
         final CachedConnection existing = cache.get(key);

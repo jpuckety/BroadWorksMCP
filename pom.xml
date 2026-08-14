@@ -42,6 +42,23 @@
             expanded and compilation fails. 1.18.46 supports current JDKs.
         -->
         <lombok.version>1.18.46</lombok.version>
+
+        <!--
+            Angular web portal (src/main/frontend) build. The frontend-maven-plugin downloads a
+            pinned Node/npm into target/ and builds the Angular app straight into
+            target/classes/static/portal so Spring Boot serves it same-origin at /portal/. The build
+            is bound to prepare-package (not test), so `mvn test` and IDE compilation never require
+            Node or the network; set -Dfrontend.skip=true to skip it entirely (e.g. when packaging
+            without the UI).
+        -->
+        <frontend-maven-plugin.version>1.15.1</frontend-maven-plugin.version>
+        <!--
+            Angular 22's toolchain requires Node ^22.22.3 || ^24.15.0 || >=26.0.0. Pinned to the 22.x
+            LTS line, whose bundled npm (10.x) installs cleanly under frontend-maven-plugin; newer npm
+            11.x downloaded by the plugin hits a minipass interop bug.
+        -->
+        <node.version>v22.23.2</node.version>
+        <frontend.skip>false</frontend.skip>
     </properties>
 
     <dependencyManagement>
@@ -442,6 +459,54 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <!--
+                Build the Angular web portal (src/main/frontend) and emit it into
+                target/classes/static/portal (configured in angular.json), so it is packaged into the
+                Spring Boot jar and served same-origin. Bound to prepare-package so it does not run
+                during `mvn test`; skip with -Dfrontend.skip=true.
+            -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>${frontend-maven-plugin.version}</version>
+                <configuration>
+                    <workingDirectory>src/main/frontend</workingDirectory>
+                    <installDirectory>${project.build.directory}</installDirectory>
+                    <skip>${frontend.skip}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals>
+                            <goal>install-node-and-npm</goal>
+                        </goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-install</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <arguments>install</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>prepare-package</phase>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

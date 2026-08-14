@@ -64,8 +64,10 @@ public class ConnectionTools {
 
     @Tool(name = "broadworks_add_connection",
             description = "Add (or replace) a BroadWorks server connection for the authenticated user. "
-                    + "Returns a summary of the stored connection; the password is stored encrypted and "
-                    + "never returned.")
+                    + "This tool never accepts or stores a password: the connection is saved without one "
+                    + "and cannot be used until the user sets the password in the web portal. After calling "
+                    + "this, tell the user to open the web portal and set the password for the connection. "
+                    + "Returns a summary of the stored connection (needsPassword=true until the password is set).")
     public ConnectionSummary addConnection(
             @ToolParam(description = "Human-friendly name / nickname for the connection, e.g. 'ECG Production'")
             String displayName,
@@ -73,7 +75,6 @@ public class ConnectionTools {
             String hostname,
             @ToolParam(description = "BroadWorks OCI port, e.g. 2208") int port,
             @ToolParam(description = "BroadWorks login username") String username,
-            @ToolParam(description = "BroadWorks login password (stored encrypted at rest)") String password,
             @ToolParam(required = false,
                     description = "Login type: SYSTEM, PROVISIONING, or SERVICEPROVIDER (defaults to SYSTEM)")
             String loginType,
@@ -85,27 +86,12 @@ public class ConnectionTools {
                             + "derived from the display name")
             String resourceId) {
         final String subject = currentSubject();
-        // Log non-secret parameters only; the password is never logged.
+        // Log non-secret parameters only. No password is accepted by this tool.
         log.debug("tool broadworks_add_connection invoked (displayName={}, host={}, port={}, username={}, "
                         + "loginType={}, resourceId={})",
                 displayName, hostname, port, username, loginType, resourceId);
 
-        if (hostname == null || hostname.isBlank()) {
-            throw new AlpacaException("hostname is required");
-        }
-        if (port <= 0 || port > 65535) {
-            throw new AlpacaException("port must be between 1 and 65535");
-        }
-        if (!hostAllowlist.isAllowed(hostname)) {
-            // Deliberately uniform message: never reveal whether the target exists or is reachable.
-            throw new AlpacaException("hostname is not a permitted BroadWorks connection target");
-        }
-        if (username == null || username.isBlank()) {
-            throw new AlpacaException("username is required");
-        }
-        if (password == null || password.isBlank()) {
-            throw new AlpacaException("password is required");
-        }
+        ConnectionValidation.validate(hostAllowlist, hostname, port, username);
 
         final String effectiveResourceId = resolveResourceId(resourceId, displayName);
         final String effectiveDisplayName = (displayName == null || displayName.isBlank())
@@ -114,6 +100,8 @@ public class ConnectionTools {
                 ? DEFAULT_LOGIN_TYPE : loginType.trim().toUpperCase(Locale.ROOT);
         final boolean privateAddress = Boolean.TRUE.equals(usePrivateApplicationServerAddress);
 
+        // No password is collected here: the connection is stored password-less and must be finished
+        // in the web portal. An empty password is what marks the connection as needing one.
         final AlpacaResource resource = new AlpacaResource(
                 effectiveResourceId,
                 effectiveDisplayName,
@@ -121,10 +109,11 @@ public class ConnectionTools {
                 port,
                 effectiveLoginType,
                 username,
-                password,
+                "",
                 privateAddress);
         resourceStore.put(subject, resource);
-        log.info("Stored BroadWorks connection resourceId={} host={} loginType={} (secret encrypted at rest)",
+        log.info("Stored BroadWorks connection resourceId={} host={} loginType={} (no password yet; "
+                        + "user must set it in the web portal)",
                 effectiveResourceId, resource.hostname(), effectiveLoginType);
         return ConnectionSummary.from(resource);
     }

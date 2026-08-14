@@ -1,0 +1,15 @@
+.app-header {
+  background: #1f2933;
+  color: #fff;
+  padding: 0.85rem 1.5rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.app-main {
+  padding: 0 1rem;
+}
