@@ -16,6 +16,19 @@ encrypted via a **customer-managed KMS key**.
 
 ---
 
+## Alpaca license required
+
+> **Use of the Alpaca libraries requires the purchase of an Alpaca License key from ECG, Inc.**
+> Developers can email **[jpuckett@e-c-group.com](mailto:jpuckett@e-c-group.com)** for pricing and
+> more information.
+
+The server calls the ECG Alpaca toolkit (`co.ecg.alpaca.toolkit`) as its sole BroadWorks interface,
+so a valid Alpaca license is required at runtime. The key can be supplied inline via the
+`ALPACA_LICENSE_KEY` environment variable (see [Environment variables](#environment-variables) and
+[Notes & limitations](#notes--limitations)).
+
+---
+
 ## Architecture
 
 ```
@@ -299,14 +312,21 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 
 | Tool | Description |
 |---|---|
+| `broadworks_list_connections` | List the authenticated user's stored BroadWorks connections. |
+| `broadworks_add_connection` | Add (or replace) a BroadWorks connection (password set later in the web portal). |
+| `broadworks_delete_connection` | Delete a stored BroadWorks connection. |
 | `broadworks_list_service_providers` | List service providers / enterprises. |
 | `broadworks_get_service_provider` | Get a service provider by id. |
-| `broadworks_list_groups` | List groups within a service provider. |
+| `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
 `AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set
 (Users, Devices, Call Centers, CDRs, …) is just a new `@Tool` bean registered in `McpToolConfig`.
+
+> **Detailed tool schema:** see **[docs/mcp-tools-schema.md](docs/mcp-tools-schema.md)** for the full
+> schema of every tool — all input parameters (name, type, required/optional) and the exact shape of
+> each return value.
 
 ---
 
