@@ -17,12 +17,37 @@ public final class AlpacaRequests {
     /**
      * Throws an {@link AlpacaException} describing the failed {@code action} when the given response is
      * an error response.
+     *
+     * <p>The message includes the numeric error code <em>and</em> the BroadWorks-supplied summary and
+     * detail text. The toolkit derives the numeric code by scanning the summary text (e.g.
+     * {@code "[Error 4015] State/Province is not valid ..."}), so that summary is where the actionable
+     * reason for the failure lives — reporting only the bare code hides why BroadWorks rejected the
+     * request. Both texts are appended only when present and non-blank, and the detail is omitted when
+     * it merely repeats the summary.</p>
      */
     public static void ensureSuccess(Response response, String action) {
         if (response.isErrorResponse()) {
-            throw new AlpacaException("BroadWorks failed to " + action
-                    + " (error code " + response.getErrorCode() + ")");
+            final StringBuilder message = new StringBuilder("BroadWorks failed to ").append(action)
+                    .append(" (error code ").append(response.getErrorCode()).append(")");
+            final String summary = trimToNull(response.getSummaryText());
+            if (summary != null) {
+                message.append(": ").append(summary);
+            }
+            final String detail = trimToNull(response.getDetailText());
+            if (detail != null && !detail.equals(summary)) {
+                message.append(summary != null ? " \u2014 " : ": ").append(detail);
+            }
+            throw new AlpacaException(message.toString());
         }
+    }
+
+    /** Returns the trimmed value, or {@code null} when the input is {@code null} or blank. */
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        final String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**

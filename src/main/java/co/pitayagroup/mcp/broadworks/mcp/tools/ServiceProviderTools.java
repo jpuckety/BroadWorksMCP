@@ -187,7 +187,9 @@ public class ServiceProviderTools {
                     description = "City; omit to leave unchanged, pass an empty string to clear")
             String city,
             @ToolParam(required = false,
-                    description = "State or province; omit to leave unchanged, pass an empty string to clear")
+                    description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
+                            + "abbreviation (e.g. 'GA'), as BroadWorks rejects abbreviations with error 4015 "
+                            + "('State or Province not valid'); omit to leave unchanged, pass an empty string to clear")
             String stateOrProvince,
             @ToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
