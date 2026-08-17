@@ -29,9 +29,11 @@ import co.ecg.alpaca.toolkit.generated.ServiceProvider;
 import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
 import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
+import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -204,6 +206,164 @@ class ServiceProviderToolsTest {
                     "sp-9", "Globex", "globex.example.com", false, null, null, null, null));
             assertThat(detail.contact()).isNull();
             assertThat(detail.address()).isNull();
+        }
+    }
+
+    @Test
+    void modifyServiceProviderAppliesSuppliedFieldsAndReturnsRefreshedDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Contact contact = mock(Contact.class);
+        final StreetAddress address = mock(StreetAddress.class);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getContact()).thenReturn(contact);
+        when(sp.getAddress()).thenReturn(address);
+
+        final ServiceProvider refreshed = mock(ServiceProvider.class);
+        when(refreshed.getServiceProviderId()).thenReturn("sp-9");
+        when(refreshed.getServiceProviderName()).thenReturn("Globex New");
+        when(refreshed.getDefaultDomain()).thenReturn("globex.example.com");
+        when(refreshed.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(refreshed.getResellerId()).thenReturn(null);
+        when(refreshed.getSupportEmail()).thenReturn("new@globex.example.com");
+        when(refreshed.getContact()).thenReturn(null);
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderModifyRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9")))
+                    .thenReturn(sp, refreshed);
+
+            final ServiceProviderDetail detail = tools.modifyServiceProvider(
+                    "sp-9", "Globex New", null, "new@globex.example.com",
+                    null, null, "jane@globex.example.com",
+                    null, null, "Metropolis", null, null, null, null);
+
+            final ServiceProvider.ServiceProviderModifyRequest req = mocked.constructed().get(0);
+            org.mockito.Mockito.verify(req).setServiceProviderName("Globex New");
+            org.mockito.Mockito.verify(req).setSupportEmail("new@globex.example.com");
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setDefaultDomain(any());
+            org.mockito.Mockito.verify(req).setContact(contact);
+            org.mockito.Mockito.verify(req).setAddress(address);
+            org.mockito.Mockito.verify(contact).setContactEmail("jane@globex.example.com");
+            org.mockito.Mockito.verify(contact, org.mockito.Mockito.never()).setContactName(any());
+            org.mockito.Mockito.verify(address).setCity("Metropolis");
+
+            assertThat(detail).isEqualTo(new ServiceProviderDetail(
+                    "sp-9", "Globex New", "globex.example.com", false, null,
+                    "new@globex.example.com", null, null));
+        }
+    }
+
+    @Test
+    void modifyServiceProviderClearsFieldsWithEmptyStringButNeverClearsName() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Contact contact = mock(Contact.class);
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getContact()).thenReturn(contact);
+
+        final ServiceProvider refreshed = mock(ServiceProvider.class);
+        when(refreshed.getServiceProviderId()).thenReturn("sp-9");
+        when(refreshed.getServiceProviderName()).thenReturn("Globex");
+        when(refreshed.getDefaultDomain()).thenReturn("globex.example.com");
+        when(refreshed.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(refreshed.getResellerId()).thenReturn(null);
+        when(refreshed.getSupportEmail()).thenReturn(null);
+        when(refreshed.getContact()).thenReturn(null);
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderModifyRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9")))
+                    .thenReturn(sp, refreshed);
+
+            tools.modifyServiceProvider(
+                    "sp-9", "", null, "",
+                    "", null, null,
+                    null, null, null, null, null, null, null);
+
+            final ServiceProvider.ServiceProviderModifyRequest req = mocked.constructed().get(0);
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setServiceProviderName(any());
+            org.mockito.Mockito.verify(req).unsetSupportEmail();
+            org.mockito.Mockito.verify(req).setContact(contact);
+            org.mockito.Mockito.verify(contact).unsetContactName();
+        }
+    }
+
+    @Test
+    void modifyServiceProviderCreatesNewContactWhenNoneExists() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getContact()).thenReturn(null);
+
+        final ServiceProvider refreshed = mock(ServiceProvider.class);
+        when(refreshed.getServiceProviderId()).thenReturn("sp-9");
+        when(refreshed.getServiceProviderName()).thenReturn("Globex");
+        when(refreshed.getDefaultDomain()).thenReturn("globex.example.com");
+        when(refreshed.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(refreshed.getResellerId()).thenReturn(null);
+        when(refreshed.getSupportEmail()).thenReturn(null);
+        when(refreshed.getContact()).thenReturn(null);
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderModifyRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9")))
+                    .thenReturn(sp, refreshed);
+
+            tools.modifyServiceProvider(
+                    "sp-9", null, null, null,
+                    "Jane Doe", null, null,
+                    null, null, null, null, null, null, null);
+
+            final ServiceProvider.ServiceProviderModifyRequest req = mocked.constructed().get(0);
+            final ArgumentCaptor<Contact> captor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(captor.capture());
+            assertThat(captor.getValue().getContactName()).contains("Jane Doe");
+        }
+    }
+
+    @Test
+    void modifyServiceProviderThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4010");
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderModifyRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9")))
+                    .thenReturn(sp);
+
+            assertThatThrownBy(() -> tools.modifyServiceProvider(
+                    "sp-9", "Globex New", null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("modify service provider");
         }
     }
 

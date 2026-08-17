@@ -10,8 +10,10 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
 import co.pitayagroup.mcp.broadworks.auth.store.inmemory.InMemoryResourceStore;
 import co.pitayagroup.mcp.broadworks.auth.store.inmemory.NoopEncryptionService;
+import co.pitayagroup.mcp.broadworks.config.PublicBaseUrlProperties;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
+import co.pitayagroup.mcp.broadworks.mcp.model.AddConnectionResult;
 import co.pitayagroup.mcp.broadworks.mcp.model.ConnectionSummary;
 
 import org.junit.jupiter.api.AfterEach;
@@ -31,7 +33,8 @@ class ConnectionToolsTest {
         resourceStore = new InMemoryResourceStore(new NoopEncryptionService());
         // The SSRF guard is exercised in HostAllowlistTest; these tests use fictional hostnames that
         // must not depend on DNS, so target screening is opted out of here.
-        tools = new ConnectionTools(resourceStore, new HostAllowlist(true));
+        tools = new ConnectionTools(resourceStore, new HostAllowlist(true),
+                new PublicBaseUrlProperties("mcp.example.com"));
         authenticateAs("sub-1", "user@example.com");
     }
 
@@ -51,7 +54,7 @@ class ConnectionToolsTest {
     @Test
     void addConnectionPersistsResourcePasswordlessAndFlagsNeedsPassword() {
         final ConnectionSummary summary = tools.addConnection(
-                "ECG Production", "portal.vwave.net", 2208, "jpuckett", null);
+                "ECG Production", "portal.vwave.net", 2208, "jpuckett", null).connection();
 
         assertThat(summary.resourceId()).isEqualTo("ecg-production");
         assertThat(summary.displayName()).isEqualTo("ECG Production");
@@ -68,9 +71,35 @@ class ConnectionToolsTest {
     }
 
     @Test
+    void addConnectionReturnsConcretePortalUrlAndMessage() {
+        final AddConnectionResult result = tools.addConnection(
+                "ECG Production", "portal.vwave.net", 2208, "jpuckett", null);
+
+        // The deep link points at the configured public base URL and the connection's password page.
+        assertThat(result.portalUrl())
+                .isEqualTo("https://mcp.example.com/portal/ecg-production/password");
+        // The ready-to-relay message names the connection and embeds the concrete URL (no secret).
+        assertThat(result.message())
+                .contains("ECG Production")
+                .contains(result.portalUrl());
+    }
+
+    @Test
+    void addConnectionPortalUrlFallsBackToLocalBaseUrlWhenNoPublicHostname() {
+        final ConnectionTools localTools = new ConnectionTools(resourceStore, new HostAllowlist(true),
+                new PublicBaseUrlProperties(null));
+
+        final AddConnectionResult result = localTools.addConnection(
+                "Lab", "lab.example.com", 2208, "admin", "custom-id");
+
+        assertThat(result.portalUrl())
+                .isEqualTo("http://localhost:8080/portal/custom-id/password");
+    }
+
+    @Test
     void addConnectionHonoursExplicitResourceId() {
         final ConnectionSummary summary = tools.addConnection(
-                "Lab", "lab.example.com", 2208, "admin", "custom-id");
+                "Lab", "lab.example.com", 2208, "admin", "custom-id").connection();
 
         assertThat(summary.resourceId()).isEqualTo("custom-id");
     }

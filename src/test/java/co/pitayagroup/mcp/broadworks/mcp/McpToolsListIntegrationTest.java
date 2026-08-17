@@ -83,6 +83,7 @@ class McpToolsListIntegrationTest {
                 .contains("broadworks_delete_connection")
                 .contains("broadworks_list_service_providers")
                 .contains("broadworks_get_service_provider")
+                .contains("broadworks_modify_service_provider")
                 .contains("broadworks_list_groups")
                 .contains("broadworks_get_group")
                 .contains("broadworks_list_users")

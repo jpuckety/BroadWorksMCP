@@ -8,8 +8,10 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.auth.store.AlpacaResource;
 import co.pitayagroup.mcp.broadworks.auth.store.ResourceStore;
+import co.pitayagroup.mcp.broadworks.config.PublicBaseUrlProperties;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.HostAllowlist;
+import co.pitayagroup.mcp.broadworks.mcp.model.AddConnectionResult;
 import co.pitayagroup.mcp.broadworks.mcp.model.ConnectionSummary;
 
 import lombok.extern.slf4j.Slf4j;
@@ -33,11 +35,22 @@ public class ConnectionTools {
 
     private final ResourceStore resourceStore;
     private final HostAllowlist hostAllowlist;
+    private final PublicBaseUrlProperties publicBaseUrl;
 
     @Autowired
-    public ConnectionTools(ResourceStore resourceStore, HostAllowlist hostAllowlist) {
+    public ConnectionTools(ResourceStore resourceStore, HostAllowlist hostAllowlist,
+            PublicBaseUrlProperties publicBaseUrl) {
         this.resourceStore = resourceStore;
         this.hostAllowlist = hostAllowlist;
+        this.publicBaseUrl = publicBaseUrl;
+    }
+
+    /**
+     * Convenience constructor for contexts that carry no public-hostname configuration; the portal
+     * URL then falls back to {@link PublicBaseUrlProperties#DEFAULT_BASE_URL} (local dev).
+     */
+    public ConnectionTools(ResourceStore resourceStore, HostAllowlist hostAllowlist) {
+        this(resourceStore, hostAllowlist, new PublicBaseUrlProperties(null));
     }
 
     /**
@@ -66,9 +79,11 @@ public class ConnectionTools {
                     + "include, or pass a password to this tool. This tool never accepts or stores a "
                     + "password: the connection is saved without one and cannot be used until the user "
                     + "sets the password in the web portal. After calling this, tell the user to open the "
-                    + "web portal and set the password for the connection. "
-                    + "Returns a summary of the stored connection (needsPassword=true until the password is set).")
-    public ConnectionSummary addConnection(
+                    + "web portal and set the password for the connection, and give them the exact 'portalUrl' "
+                    + "returned in the response. "
+                    + "Returns the stored connection summary (needsPassword=true until the password is set), "
+                    + "the 'portalUrl' deep link to the password page, and a ready-to-relay 'message'.")
+    public AddConnectionResult addConnection(
             @ToolParam(description = "Human-friendly name / nickname for the connection, e.g. 'ECG Production'")
             String displayName,
             @ToolParam(description = "BroadWorks OCI hostname (no scheme or path), e.g. portal.example.com")
@@ -106,7 +121,21 @@ public class ConnectionTools {
         log.info("Stored BroadWorks connection resourceId={} host={} (no password yet; "
                         + "user must set it in the web portal)",
                 effectiveResourceId, resource.hostname());
-        return ConnectionSummary.from(resource);
+
+        final ConnectionSummary summary = ConnectionSummary.from(resource);
+        final String portalUrl = passwordPortalUrl(effectiveResourceId);
+        final String message = "Connection '" + effectiveDisplayName + "' was saved without a password "
+                + "and cannot be used yet. Open the web portal to set the password: " + portalUrl;
+        return new AddConnectionResult(summary, portalUrl, message);
+    }
+
+    /**
+     * Deep link to the web-portal page where the password for the given connection is set
+     * ({@code <baseUrl>/portal/<resourceId>/password}). The base URL is the server's own externally
+     * reachable address, so this is a URL the end user can open directly.
+     */
+    private String passwordPortalUrl(String resourceId) {
+        return publicBaseUrl.baseUrl() + "/portal/" + resourceId + "/password";
     }
 
     @Tool(name = "broadworks_delete_connection",

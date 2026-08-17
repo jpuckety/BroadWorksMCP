@@ -43,6 +43,7 @@ class McpToolsListDumperTest {
                 "broadworks_delete_connection",
                 "broadworks_list_service_providers",
                 "broadworks_get_service_provider",
+                "broadworks_modify_service_provider",
                 "broadworks_list_groups",
                 "broadworks_get_group",
                 "broadworks_list_users",

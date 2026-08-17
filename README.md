@@ -322,10 +322,11 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | Tool | Description |
 |---|---|
 | `broadworks_list_connections` | List the authenticated user's stored BroadWorks connections. |
-| `broadworks_add_connection` | Add (or replace) a BroadWorks connection (password set later in the web portal). |
+| `broadworks_add_connection` | Add (or replace) a BroadWorks connection (stored password-less; the response returns a `portalUrl` deep link to the web-portal page where the password is set). |
 | `broadworks_delete_connection` | Delete a stored BroadWorks connection. |
 | `broadworks_list_service_providers` | List service providers / enterprises. |
 | `broadworks_get_service_provider` | Get a service provider by id. |
+| `broadworks_modify_service_provider` | Modify a service provider (partial update: name, default domain, support email, contact, address). Mutates live BroadWorks data. |
 | `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
 | `broadworks_list_users` | List (or search) users within a group, service provider, or system-wide. |
