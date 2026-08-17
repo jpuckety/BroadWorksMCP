@@ -152,7 +152,7 @@ public class ServiceProviderTools {
             description = "Modify a single BroadWorks service provider. This mutates live BroadWorks data. "
                     + "Only the fields you supply are changed (partial update); omit a field to leave it "
                     + "unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for fields you are "
-                    + "not changing \u2014 omit them entirely, otherwise BroadWorks may reject the request as "
+                    + "not changing — omit them entirely, otherwise BroadWorks may reject the request as "
                     + "invalid. For the clearable fields (supportEmail and each contact/address field) pass "
                     + "an empty string to clear the current value. serviceProviderName and defaultDomain cannot "
                     + "be cleared and are only changed when a non-blank value is supplied. Returns the refreshed "
@@ -188,8 +188,7 @@ public class ServiceProviderTools {
             String city,
             @ToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
-                            + "abbreviation (e.g. 'GA'), as BroadWorks rejects abbreviations with error 4015 "
-                            + "('State or Province not valid'); omit to leave unchanged, pass an empty string to clear")
+                            + "abbreviation (e.g. 'GA'); omit to leave unchanged, pass an empty string to clear")
             String stateOrProvince,
             @ToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
