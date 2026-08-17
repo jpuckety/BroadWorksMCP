@@ -151,7 +151,9 @@ public class ServiceProviderTools {
     @Tool(name = "broadworks_modify_service_provider",
             description = "Modify a single BroadWorks service provider. This mutates live BroadWorks data. "
                     + "Only the fields you supply are changed (partial update); omit a field to leave it "
-                    + "unchanged. For the clearable fields (supportEmail and each contact/address field) pass "
+                    + "unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for fields you are "
+                    + "not changing \u2014 omit them entirely, otherwise BroadWorks may reject the request as "
+                    + "invalid. For the clearable fields (supportEmail and each contact/address field) pass "
                     + "an empty string to clear the current value. serviceProviderName and defaultDomain cannot "
                     + "be cleared and are only changed when a non-blank value is supplied. Returns the refreshed "
                     + "service provider detail reflecting the applied state.")
@@ -210,25 +212,29 @@ public class ServiceProviderTools {
             if (isPresent(defaultDomain)) {
                 request.setDefaultDomain(defaultDomain.trim());
             }
-            apply(supportEmail, request::setSupportEmail, request::unsetSupportEmail);
+            apply(supportEmail, request::setSupportEmail);
 
+            // Build fresh Contact/StreetAddress objects and set only the supplied sub-fields. OCI treats an
+            // omitted child element as "leave unchanged" and a nil element as "clear", so we must NOT resend the
+            // current values of untouched sub-fields: doing so re-validates stale data (e.g. an invalid
+            // stateOrProvince), which is what caused BroadWorks error 4015 when only the country was changed.
             if (contactName != null || contactNumber != null || contactEmail != null) {
-                final Contact contact = sp.getContact() != null ? sp.getContact() : new Contact();
-                apply(contactName, contact::setContactName, contact::unsetContactName);
-                apply(contactNumber, contact::setContactNumber, contact::unsetContactNumber);
-                apply(contactEmail, contact::setContactEmail, contact::unsetContactEmail);
+                final Contact contact = new Contact();
+                apply(contactName, contact::setContactName);
+                apply(contactNumber, contact::setContactNumber);
+                apply(contactEmail, contact::setContactEmail);
                 request.setContact(contact);
             }
 
             if (addressLine1 != null || addressLine2 != null || city != null
                     || stateOrProvince != null || zipOrPostalCode != null || country != null) {
-                final StreetAddress address = sp.getAddress() != null ? sp.getAddress() : new StreetAddress();
-                apply(addressLine1, address::setAddressLine1, address::unsetAddressLine1);
-                apply(addressLine2, address::setAddressLine2, address::unsetAddressLine2);
-                apply(city, address::setCity, address::unsetCity);
-                apply(stateOrProvince, address::setStateOrProvince, address::unsetStateOrProvince);
-                apply(zipOrPostalCode, address::setZipOrPostalCode, address::unsetZipOrPostalCode);
-                apply(country, address::setCountry, address::unsetCountry);
+                final StreetAddress address = new StreetAddress();
+                apply(addressLine1, address::setAddressLine1);
+                apply(addressLine2, address::setAddressLine2);
+                apply(city, address::setCity);
+                apply(stateOrProvince, address::setStateOrProvince);
+                apply(zipOrPostalCode, address::setZipOrPostalCode);
+                apply(country, address::setCountry);
                 request.setAddress(address);
             }
 
@@ -263,19 +269,22 @@ public class ServiceProviderTools {
     }
 
     /**
-     * Applies a tool-supplied string using set/unset/leave semantics: a {@code null} value leaves the
-     * field unchanged, a blank string clears it (via {@code unsetter}), and any other value sets the
-     * trimmed string (via {@code setter}).
+     * Applies a tool-supplied string using set/clear/leave semantics against an Alpaca setter.
+     *
+     * <p>A {@code null} value leaves the field unchanged (the setter is never called, so the backing
+     * optional stays {@code null} and the element is omitted from the request). A blank value clears the
+     * field by passing {@code null} to the setter, which the toolkit maps to {@link java.util.Optional#empty()}
+     * and serializes as a nil element. Any other value sets the trimmed string.</p>
+     *
+     * <p>Note: the toolkit's {@code unsetX()} methods set the backing optional to {@code null}, which means
+     * "leave unchanged" (omit) rather than "clear" — so clearing must go through the setter with a {@code null}
+     * argument, not through {@code unsetX()}.</p>
      */
-    private static void apply(String value, Consumer<String> setter, Runnable unsetter) {
+    private static void apply(String value, Consumer<String> setter) {
         if (value == null) {
             return;
         }
-        if (value.isBlank()) {
-            unsetter.run();
-        } else {
-            setter.accept(value.trim());
-        }
+        setter.accept(value.isBlank() ? null : value.trim());
     }
 
     private BroadWorksServer connect(String resourceId) {

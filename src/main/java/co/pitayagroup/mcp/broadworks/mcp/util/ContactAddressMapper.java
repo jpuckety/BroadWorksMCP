@@ -1,5 +1,7 @@
 package co.pitayagroup.mcp.broadworks.mcp.util;
 
+import java.util.Optional;
+
 import co.pitayagroup.mcp.broadworks.mcp.model.AddressInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.ContactInfo;
 
@@ -11,10 +13,25 @@ import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
  *
  * <p>Each mapping is null-safe: a {@code null} source produces a {@code null} DTO, and each
  * {@link java.util.Optional} field is unwrapped to a plain nullable {@link String}.</p>
+ *
+ * <p>The Alpaca datatype getters return the raw backing field, which is {@code null} (rather than
+ * {@link Optional#empty()}) whenever the corresponding element was absent from the OCI response.
+ * Unwrapping therefore guards against a {@code null} {@link Optional} to avoid a
+ * {@link NullPointerException}.</p>
  */
 public final class ContactAddressMapper {
 
     private ContactAddressMapper() {
+    }
+
+    /**
+     * Null-safely unwraps an Alpaca datatype {@link Optional} field to a plain nullable value.
+     *
+     * @param value the (possibly {@code null}) optional returned by an Alpaca getter.
+     * @return the contained value, or {@code null} when the optional is {@code null} or empty.
+     */
+    private static String unwrap(Optional<String> value) {
+        return value == null ? null : value.orElse(null);
     }
 
     /**
@@ -28,9 +45,9 @@ public final class ContactAddressMapper {
             return null;
         }
         return new ContactInfo(
-                contact.getContactName().orElse(null),
-                contact.getContactNumber().orElse(null),
-                contact.getContactEmail().orElse(null));
+                unwrap(contact.getContactName()),
+                unwrap(contact.getContactNumber()),
+                unwrap(contact.getContactEmail()));
     }
 
     /**
@@ -44,11 +61,11 @@ public final class ContactAddressMapper {
             return null;
         }
         return new AddressInfo(
-                address.getAddressLine1().orElse(null),
-                address.getAddressLine2().orElse(null),
-                address.getCity().orElse(null),
-                address.getStateOrProvince().orElse(null),
-                address.getZipOrPostalCode().orElse(null),
-                address.getCountry().orElse(null));
+                unwrap(address.getAddressLine1()),
+                unwrap(address.getAddressLine2()),
+                unwrap(address.getCity()),
+                unwrap(address.getStateOrProvince()),
+                unwrap(address.getZipOrPostalCode()),
+                unwrap(address.getCountry()));
     }
 }

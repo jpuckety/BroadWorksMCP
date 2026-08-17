@@ -213,12 +213,7 @@ class ServiceProviderToolsTest {
     void modifyServiceProviderAppliesSuppliedFieldsAndReturnsRefreshedDetail() {
         when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
 
-        final Contact contact = mock(Contact.class);
-        final StreetAddress address = mock(StreetAddress.class);
-
         final ServiceProvider sp = mock(ServiceProvider.class);
-        when(sp.getContact()).thenReturn(contact);
-        when(sp.getAddress()).thenReturn(address);
 
         final ServiceProvider refreshed = mock(ServiceProvider.class);
         when(refreshed.getServiceProviderId()).thenReturn("sp-9");
@@ -249,11 +244,18 @@ class ServiceProviderToolsTest {
             org.mockito.Mockito.verify(req).setServiceProviderName("Globex New");
             org.mockito.Mockito.verify(req).setSupportEmail("new@globex.example.com");
             org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setDefaultDomain(any());
-            org.mockito.Mockito.verify(req).setContact(contact);
-            org.mockito.Mockito.verify(req).setAddress(address);
-            org.mockito.Mockito.verify(contact).setContactEmail("jane@globex.example.com");
-            org.mockito.Mockito.verify(contact, org.mockito.Mockito.never()).setContactName(any());
-            org.mockito.Mockito.verify(address).setCity("Metropolis");
+
+            // Only supplied sub-fields end up on the fresh Contact/StreetAddress; untouched ones stay unset
+            // (raw null Optional) so they are omitted from the OCI request rather than re-sent.
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            assertThat(contactCaptor.getValue().getContactEmail()).contains("jane@globex.example.com");
+            assertThat(contactCaptor.getValue().getContactName()).isNull();
+
+            final ArgumentCaptor<StreetAddress> addressCaptor = ArgumentCaptor.forClass(StreetAddress.class);
+            org.mockito.Mockito.verify(req).setAddress(addressCaptor.capture());
+            assertThat(addressCaptor.getValue().getCity()).contains("Metropolis");
+            assertThat(addressCaptor.getValue().getCountry()).isNull();
 
             assertThat(detail).isEqualTo(new ServiceProviderDetail(
                     "sp-9", "Globex New", "globex.example.com", false, null,
@@ -265,9 +267,7 @@ class ServiceProviderToolsTest {
     void modifyServiceProviderClearsFieldsWithEmptyStringButNeverClearsName() {
         when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
 
-        final Contact contact = mock(Contact.class);
         final ServiceProvider sp = mock(ServiceProvider.class);
-        when(sp.getContact()).thenReturn(contact);
 
         final ServiceProvider refreshed = mock(ServiceProvider.class);
         when(refreshed.getServiceProviderId()).thenReturn("sp-9");
@@ -295,10 +295,16 @@ class ServiceProviderToolsTest {
                     null, null, null, null, null, null, null);
 
             final ServiceProvider.ServiceProviderModifyRequest req = mocked.constructed().get(0);
+            // Name is never cleared: a blank display name is ignored (never passed to the setter).
             org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setServiceProviderName(any());
-            org.mockito.Mockito.verify(req).unsetSupportEmail();
-            org.mockito.Mockito.verify(req).setContact(contact);
-            org.mockito.Mockito.verify(contact).unsetContactName();
+            // A blank clearable field clears via setX(null) -> Optional.empty() (nil), NOT unsetX().
+            org.mockito.Mockito.verify(req).setSupportEmail(null);
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).unsetSupportEmail();
+
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            // Cleared field is present-but-empty (Optional.empty()), which serializes as a nil element.
+            assertThat(contactCaptor.getValue().getContactName()).isNotNull().isEmpty();
         }
     }
 
@@ -307,7 +313,6 @@ class ServiceProviderToolsTest {
         when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
 
         final ServiceProvider sp = mock(ServiceProvider.class);
-        when(sp.getContact()).thenReturn(null);
 
         final ServiceProvider refreshed = mock(ServiceProvider.class);
         when(refreshed.getServiceProviderId()).thenReturn("sp-9");
