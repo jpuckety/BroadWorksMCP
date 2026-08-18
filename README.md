@@ -327,12 +327,15 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_list_service_providers` | List service providers / enterprises. |
 | `broadworks_get_service_provider` | Get a service provider by id. |
 | `broadworks_modify_service_provider` | Modify a service provider (partial update: name, default domain, support email, contact, address). Mutates live BroadWorks data. |
+| `broadworks_create_service_provider` | Create a service provider (or enterprise) from id, name, default domain, and optional support email, contact, address. Mutates live BroadWorks data. |
 | `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
 | `broadworks_modify_group` | Modify a group (partial update: name, default domain, user limit, calling line id, time zone, location dialing code, contact, address). Mutates live BroadWorks data. |
+| `broadworks_create_group` | Create a group within a service provider from id, name, default domain, user limit, and optional time zone, calling line id, location dialing code, contact, address. Mutates live BroadWorks data. |
 | `broadworks_list_users` | List (or search) users within a group, service provider, or system-wide. |
 | `broadworks_get_user` | Get a user by their (system-unique) user id. |
 | `broadworks_modify_user` | Modify a user (partial update: name, phone/extension, email, title, mobile, time zone, language, calling line id, address; passwords excluded). Mutates live BroadWorks data. |
+| `broadworks_create_user` | Create a user within a group from id, first/last name, and optional password, calling line id, phone/extension, email, title, mobile, time zone, language, address. Mutates live BroadWorks data. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
 `AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set

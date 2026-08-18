@@ -447,6 +447,130 @@ public class UserTools {
         }
     }
 
+    @Tool(name = "broadworks_create_user",
+            description = "Create a new BroadWorks user within a group. This mutates live BroadWorks data. "
+                    + "serviceProviderId, groupId, userId, firstName and lastName are required. "
+                    + "callingLineIdFirstName and callingLineIdLastName default to firstName and lastName when "
+                    + "omitted. Supplying a password is strongly recommended (BroadWorks may reject the user or "
+                    + "leave it unusable without one). All other fields (phoneNumber, extension, emailAddress, "
+                    + "title, mobilePhoneNumber, timeZone, language, callingLineIdPhoneNumber and each address "
+                    + "field) are only sent when supplied — omit them entirely rather than sending placeholder "
+                    + "values such as 'N/A' or '00000', otherwise BroadWorks may reject the request as invalid. "
+                    + "Fails if a user with the same id already exists. Returns the newly created user detail.")
+    public UserDetail createUser(
+            @ToolParam(description = "The service provider id that owns the target group") String serviceProviderId,
+            @ToolParam(description = "The group id the new user will belong to") String groupId,
+            @ToolParam(description = "The id for the new user (must be unique system-wide)") String userId,
+            @ToolParam(description = "First name") String firstName,
+            @ToolParam(description = "Last name") String lastName,
+            @ToolParam(required = false,
+                    description = "Calling line id first name; defaults to firstName when omitted")
+            String callingLineIdFirstName,
+            @ToolParam(required = false,
+                    description = "Calling line id last name; defaults to lastName when omitted")
+            String callingLineIdLastName,
+            @ToolParam(required = false,
+                    description = "Initial password for the new user; strongly recommended")
+            String password,
+            @ToolParam(required = false,
+                    description = "Phone number; omit to leave unset")
+            String phoneNumber,
+            @ToolParam(required = false,
+                    description = "Extension; omit to leave unset")
+            String extension,
+            @ToolParam(required = false,
+                    description = "Email address; omit to leave unset")
+            String emailAddress,
+            @ToolParam(required = false,
+                    description = "Title; omit to leave unset")
+            String title,
+            @ToolParam(required = false,
+                    description = "Mobile phone number; omit to leave unset")
+            String mobilePhoneNumber,
+            @ToolParam(required = false,
+                    description = "Time zone (e.g. 'America/New_York'); omit to leave unset")
+            String timeZone,
+            @ToolParam(required = false,
+                    description = "Language; omit to leave unset")
+            String language,
+            @ToolParam(required = false,
+                    description = "Calling line id phone number; omit to leave unset")
+            String callingLineIdPhoneNumber,
+            @ToolParam(required = false,
+                    description = "Address line 1; omit to leave unset")
+            String addressLine1,
+            @ToolParam(required = false,
+                    description = "Address line 2; omit to leave unset")
+            String addressLine2,
+            @ToolParam(required = false,
+                    description = "City; omit to leave unset")
+            String city,
+            @ToolParam(required = false,
+                    description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
+                            + "abbreviation (e.g. 'GA'); omit to leave unset")
+            String stateOrProvince,
+            @ToolParam(required = false,
+                    description = "ZIP or postal code; omit to leave unset")
+            String zipOrPostalCode,
+            @ToolParam(required = false,
+                    description = "Country; omit to leave unset")
+            String country,
+            @ToolParam(required = false,
+                    description = "Optional BroadWorks resource id when multiple connections are configured")
+            String resourceId) {
+        log.debug("tool broadworks_create_user invoked (serviceProviderId={}, groupId={}, userId={}, resourceId={})",
+                serviceProviderId, groupId, userId, resourceId);
+        final String spId = require(serviceProviderId, "serviceProviderId");
+        final String grpId = require(groupId, "groupId");
+        final String uId = require(userId, "userId");
+        final String first = require(firstName, "firstName");
+        final String last = require(lastName, "lastName");
+        final String clidFirst = isPresent(callingLineIdFirstName) ? callingLineIdFirstName.trim() : first;
+        final String clidLast = isPresent(callingLineIdLastName) ? callingLineIdLastName.trim() : last;
+        final BroadWorksServer server = connect(resourceId);
+        try {
+            final User.UserAddRequest request = new User.UserAddRequest(
+                    server, spId, grpId, uId, last, first, clidLast, clidFirst);
+            if (isPresent(password)) {
+                request.setPassword(password.trim());
+            }
+            if (isPresent(timeZone)) {
+                request.setTimeZone(timeZone.trim());
+            }
+            if (isPresent(language)) {
+                request.setLanguage(language.trim());
+            }
+            apply(phoneNumber, request::setPhoneNumber);
+            apply(extension, request::setExtension);
+            apply(emailAddress, request::setEmailAddress);
+            apply(title, request::setTitle);
+            apply(mobilePhoneNumber, request::setMobilePhoneNumber);
+            apply(callingLineIdPhoneNumber, request::setCallingLineIdPhoneNumber);
+
+            if (addressLine1 != null || addressLine2 != null || city != null
+                    || stateOrProvince != null || zipOrPostalCode != null || country != null) {
+                final StreetAddress address = new StreetAddress();
+                apply(addressLine1, address::setAddressLine1);
+                apply(addressLine2, address::setAddressLine2);
+                apply(city, address::setCity);
+                apply(stateOrProvince, address::setStateOrProvince);
+                apply(zipOrPostalCode, address::setZipOrPostalCode);
+                apply(country, address::setCountry);
+                request.setAddress(address);
+            }
+
+            final DefaultResponse response = request.fire();
+            AlpacaRequests.ensureSuccess(response, "create user " + uId);
+
+            final User created = User.getPopulatedUser(server, uId);
+            log.debug("tool broadworks_create_user succeeded (userId={})", uId);
+            return toDetail(created);
+        } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_create_user failed for userId={}: {}", uId, ex.getMessage());
+            throw new AlpacaException("User created but could not be read back: " + uId, ex);
+        }
+    }
+
     /** Maps a populated {@link User} to a compact {@link UserDetail} DTO. */
     private static UserDetail toDetail(User user) {
         return new UserDetail(
@@ -471,6 +595,14 @@ public class UserTools {
 
     private static boolean isPresent(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /** Returns the trimmed value or throws when the required field is null or blank. */
+    private static String require(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new AlpacaException(field + " is required");
+        }
+        return value.trim();
     }
 
     /**

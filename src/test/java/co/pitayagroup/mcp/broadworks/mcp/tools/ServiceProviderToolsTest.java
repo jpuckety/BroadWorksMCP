@@ -453,4 +453,110 @@ class ServiceProviderToolsTest {
         assertThat(page.hasMore()).isFalse();
         assertThat(page.nextCursor()).isNull();
     }
+
+    @Test
+    void createServiceProviderSendsRequiredFieldsAndReturnsDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider created = mock(ServiceProvider.class);
+        when(created.getServiceProviderId()).thenReturn("sp-new");
+        when(created.getServiceProviderName()).thenReturn("Acme");
+        when(created.getDefaultDomain()).thenReturn("acme.example.com");
+        when(created.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(created.getResellerId()).thenReturn(null);
+        when(created.getSupportEmail()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-new")))
+                    .thenReturn(created);
+
+            final ServiceProviderDetail detail = tools.createServiceProvider(
+                    "sp-new", "Acme", "acme.example.com", null, "help@acme.example.com",
+                    "Jane", null, null, null, null, null, null, null, null, null);
+
+            final ServiceProvider.ServiceProviderConsolidatedAddRequest req = mocked.constructed().get(0);
+            org.mockito.Mockito.verify(req).setServiceProviderName("Acme");
+            org.mockito.Mockito.verify(req).setDefaultDomain("acme.example.com");
+            org.mockito.Mockito.verify(req).setSupportEmail("help@acme.example.com");
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setFlagIsEnterprise();
+
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            assertThat(contactCaptor.getValue().getContactName()).contains("Jane");
+
+            assertThat(detail).isEqualTo(new ServiceProviderDetail(
+                    "sp-new", "Acme", "acme.example.com", false, null, null, null, null));
+        }
+    }
+
+    @Test
+    void createServiceProviderSetsEnterpriseFlagWhenRequested() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider created = mock(ServiceProvider.class);
+        when(created.getServiceProviderId()).thenReturn("ent-1");
+        when(created.getServiceProviderName()).thenReturn("Ent");
+        when(created.getDefaultDomain()).thenReturn("ent.example.com");
+        when(created.getIsEnterprise()).thenReturn(Boolean.TRUE);
+        when(created.getResellerId()).thenReturn(null);
+        when(created.getSupportEmail()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("ent-1")))
+                    .thenReturn(created);
+
+            final ServiceProviderDetail detail = tools.createServiceProvider(
+                    "ent-1", "Ent", "ent.example.com", true, null,
+                    null, null, null, null, null, null, null, null, null, null);
+
+            org.mockito.Mockito.verify(mocked.constructed().get(0)).setFlagIsEnterprise();
+            assertThat(detail.enterprise()).isTrue();
+        }
+    }
+
+    @Test
+    void createServiceProviderRejectsMissingRequiredField() {
+        assertThatThrownBy(() -> tools.createServiceProvider(
+                "  ", "Acme", "acme.example.com", null, null,
+                null, null, null, null, null, null, null, null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("serviceProviderId is required");
+    }
+
+    @Test
+    void createServiceProviderThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4003");
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+
+            assertThatThrownBy(() -> tools.createServiceProvider(
+                    "sp-dup", "Acme", "acme.example.com", null, null,
+                    null, null, null, null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("create service provider");
+        }
+    }
 }

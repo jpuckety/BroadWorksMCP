@@ -316,6 +316,116 @@ public class GroupTools {
         }
     }
 
+    @Tool(name = "broadworks_create_group",
+            description = "Create a new BroadWorks group within a service provider. This mutates live "
+                    + "BroadWorks data. serviceProviderId, groupId, groupName, defaultDomain and userLimit are "
+                    + "required. The optional timeZone, callingLineIdName, locationDialingCode, contact "
+                    + "(name/number/email) and address fields are only sent when supplied — omit them entirely "
+                    + "rather than sending placeholder values such as 'N/A' or '00000', otherwise BroadWorks may "
+                    + "reject the request as invalid. Fails if a group with the same id already exists in the "
+                    + "service provider. Returns the newly created group detail.")
+    public GroupDetail createGroup(
+            @ToolParam(description = "The service provider id that will own the new group") String serviceProviderId,
+            @ToolParam(description = "The id for the new group (must be unique within the service provider)")
+            String groupId,
+            @ToolParam(description = "The display name for the new group") String groupName,
+            @ToolParam(description = "The default domain for the new group") String defaultDomain,
+            @ToolParam(description = "The maximum number of users allowed in the new group") Integer userLimit,
+            @ToolParam(required = false,
+                    description = "Time zone (e.g. 'America/New_York'); omit to leave unset")
+            String timeZone,
+            @ToolParam(required = false,
+                    description = "Calling line id name; omit to leave unset")
+            String callingLineIdName,
+            @ToolParam(required = false,
+                    description = "Location dialing code; omit to leave unset")
+            String locationDialingCode,
+            @ToolParam(required = false,
+                    description = "Contact person's name; omit to leave unset")
+            String contactName,
+            @ToolParam(required = false,
+                    description = "Contact phone number; omit to leave unset")
+            String contactNumber,
+            @ToolParam(required = false,
+                    description = "Contact email address; omit to leave unset")
+            String contactEmail,
+            @ToolParam(required = false,
+                    description = "Address line 1; omit to leave unset")
+            String addressLine1,
+            @ToolParam(required = false,
+                    description = "Address line 2; omit to leave unset")
+            String addressLine2,
+            @ToolParam(required = false,
+                    description = "City; omit to leave unset")
+            String city,
+            @ToolParam(required = false,
+                    description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
+                            + "abbreviation (e.g. 'GA'); omit to leave unset")
+            String stateOrProvince,
+            @ToolParam(required = false,
+                    description = "ZIP or postal code; omit to leave unset")
+            String zipOrPostalCode,
+            @ToolParam(required = false,
+                    description = "Country; omit to leave unset")
+            String country,
+            @ToolParam(required = false,
+                    description = "Optional BroadWorks resource id when multiple connections are configured")
+            String resourceId) {
+        log.debug("tool broadworks_create_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
+                serviceProviderId, groupId, resourceId);
+        final String spId = require(serviceProviderId, "serviceProviderId");
+        final String grpId = require(groupId, "groupId");
+        final String grpName = require(groupName, "groupName");
+        final String domain = require(defaultDomain, "defaultDomain");
+        if (userLimit == null) {
+            throw new AlpacaException("userLimit is required");
+        }
+        final BroadWorksServer server = connect(resourceId);
+        try {
+            final Group.GroupConsolidatedAddRequest request =
+                    new Group.GroupConsolidatedAddRequest(server, spId, domain, userLimit);
+            request.setGroupId(grpId);
+            request.setGroupName(grpName);
+            if (isPresent(timeZone)) {
+                request.setTimeZone(timeZone.trim());
+            }
+            apply(callingLineIdName, request::setCallingLineIdName);
+            apply(locationDialingCode, request::setLocationDialingCode);
+
+            if (contactName != null || contactNumber != null || contactEmail != null) {
+                final Contact contact = new Contact();
+                apply(contactName, contact::setContactName);
+                apply(contactNumber, contact::setContactNumber);
+                apply(contactEmail, contact::setContactEmail);
+                request.setContact(contact);
+            }
+
+            if (addressLine1 != null || addressLine2 != null || city != null
+                    || stateOrProvince != null || zipOrPostalCode != null || country != null) {
+                final StreetAddress address = new StreetAddress();
+                apply(addressLine1, address::setAddressLine1);
+                apply(addressLine2, address::setAddressLine2);
+                apply(city, address::setCity);
+                apply(stateOrProvince, address::setStateOrProvince);
+                apply(zipOrPostalCode, address::setZipOrPostalCode);
+                apply(country, address::setCountry);
+                request.setAddress(address);
+            }
+
+            final Group.GroupConsolidatedAddResponse response = request.fire();
+            AlpacaRequests.ensureSuccess(response, "create group " + spId + "/" + grpId);
+
+            final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
+            final Group created = Group.getPopulatedGroup(serviceProvider, grpId);
+            log.debug("tool broadworks_create_group succeeded (serviceProviderId={}, groupId={})", spId, grpId);
+            return toDetail(created);
+        } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_create_group failed for serviceProviderId={} groupId={}: {}",
+                    spId, grpId, ex.getMessage());
+            throw new AlpacaException("Group created but could not be read back: " + spId + "/" + grpId, ex);
+        }
+    }
+
     /** Maps a populated {@link Group} to a compact {@link GroupDetail} DTO. */
     private static GroupDetail toDetail(Group group) {
         return new GroupDetail(
@@ -335,6 +445,14 @@ public class GroupTools {
 
     private static boolean isPresent(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /** Returns the trimmed value or throws when the required field is null or blank. */
+    private static String require(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new AlpacaException(field + " is required");
+        }
+        return value.trim();
     }
 
     /**

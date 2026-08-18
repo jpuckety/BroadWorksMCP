@@ -33,11 +33,14 @@ class ToolRegistrationProbeTest {
                 "broadworks_list_service_providers",
                 "broadworks_get_service_provider",
                 "broadworks_modify_service_provider",
+                "broadworks_create_service_provider",
                 "broadworks_list_groups",
                 "broadworks_get_group",
                 "broadworks_modify_group",
+                "broadworks_create_group",
                 "broadworks_list_users",
                 "broadworks_get_user",
-                "broadworks_modify_user");
+                "broadworks_modify_user",
+                "broadworks_create_user");
     }
 }

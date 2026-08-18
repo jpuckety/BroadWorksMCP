@@ -446,4 +446,106 @@ class UserToolsTest {
                     .hasMessageContaining("modify user");
         }
     }
+
+    @Test
+    void createUserSendsRequiredFieldsDefaultsClidAndReturnsDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User created = mock(User.class);
+        when(created.getUserId()).thenReturn("user-new@example.com");
+        when(created.getGroupId()).thenReturn("grp-1");
+        when(created.getServiceProviderId()).thenReturn("sp-1");
+        when(created.getFirstName()).thenReturn("Jane");
+        when(created.getLastName()).thenReturn("Doe");
+        when(created.getPhoneNumber()).thenReturn("+1-555-0100");
+        when(created.getExtension()).thenReturn("1001");
+        when(created.getEmailAddress()).thenReturn("jane@example.com");
+        when(created.getDepartmentFullPath()).thenReturn(null);
+        when(created.getTitle()).thenReturn("Manager");
+        when(created.getMobilePhoneNumber()).thenReturn(null);
+        when(created.getTimeZone()).thenReturn("America/New_York");
+        when(created.getLanguage()).thenReturn("English");
+        when(created.getCallingLineIdFirstName()).thenReturn("Jane");
+        when(created.getCallingLineIdLastName()).thenReturn("Doe");
+        when(created.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        final List<List<Object>> ctorArgs = new ArrayList<>();
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserAddRequest> reqCtor =
+                     mockConstruction(User.UserAddRequest.class,
+                             (m, ctx) -> {
+                                 ctorArgs.add(new ArrayList<>(ctx.arguments()));
+                                 when(m.fire()).thenReturn(response);
+                             })) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-new@example.com")))
+                    .thenReturn(created);
+
+            final UserDetail detail = tools.createUser(
+                    "sp-1", "grp-1", "user-new@example.com", "Jane", "Doe",
+                    null, null, "s3cret", "+1-555-0100", "1001",
+                    "jane@example.com", "Manager", null, "America/New_York", "English",
+                    null, null, null, "Springfield", null, null, null, null);
+
+            // callingLineId first/last default to first/last name (constructor arg order:
+            // server, serviceProviderId, groupId, userId, lastName, firstName, clidLastName, clidFirstName).
+            assertThat(ctorArgs.get(0)).containsExactly(
+                    null, "sp-1", "grp-1", "user-new@example.com", "Doe", "Jane", "Doe", "Jane");
+
+            final User.UserAddRequest req = reqCtor.constructed().get(0);
+            verify(req).setPassword("s3cret");
+            verify(req).setTimeZone("America/New_York");
+            verify(req).setLanguage("English");
+            verify(req).setPhoneNumber("+1-555-0100");
+            verify(req).setExtension("1001");
+            verify(req).setEmailAddress("jane@example.com");
+            verify(req).setTitle("Manager");
+
+            final ArgumentCaptor<StreetAddress> addressCaptor = ArgumentCaptor.forClass(StreetAddress.class);
+            verify(req).setAddress(addressCaptor.capture());
+            assertThat(addressCaptor.getValue().getCity()).contains("Springfield");
+
+            assertThat(detail).isEqualTo(new UserDetail(
+                    "user-new@example.com", "grp-1", "sp-1", "Jane", "Doe",
+                    "+1-555-0100", "1001", "jane@example.com", null, "Manager",
+                    null, "America/New_York", "English", "Jane", "Doe", null, null));
+        }
+    }
+
+    @Test
+    void createUserRejectsMissingRequiredField() {
+        assertThatThrownBy(() -> tools.createUser(
+                "sp-1", "grp-1", "  ", "Jane", "Doe",
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("userId is required");
+    }
+
+    @Test
+    void createUserThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4010");
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserAddRequest> ignored =
+                     mockConstruction(User.UserAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+
+            assertThatThrownBy(() -> tools.createUser(
+                    "sp-1", "grp-1", "user-dup@example.com", "Jane", "Doe",
+                    null, null, "s3cret", null, null,
+                    null, null, null, null, null,
+                    null, null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("create user");
+        }
+    }
 }

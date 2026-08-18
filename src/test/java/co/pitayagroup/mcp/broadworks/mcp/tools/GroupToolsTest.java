@@ -401,4 +401,95 @@ class GroupToolsTest {
                     .hasMessageContaining("modify group");
         }
     }
+
+    @Test
+    void createGroupSendsRequiredFieldsAndReturnsDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group created = mock(Group.class);
+        when(created.getGroupId()).thenReturn("grp-new");
+        when(created.getGroupName()).thenReturn("Support");
+        when(created.getServiceProviderId()).thenReturn("sp-1");
+        when(created.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(created.getUserCount()).thenReturn(0);
+        when(created.getUserLimit()).thenReturn(50);
+        when(created.getCallingLineIdName()).thenReturn("Main CLID");
+        when(created.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(created.getTimeZone()).thenReturn("America/New_York");
+        when(created.getLocationDialingCode()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final Group.GroupConsolidatedAddResponse response =
+                mock(Group.GroupConsolidatedAddResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupConsolidatedAddRequest> reqCtor =
+                     mockConstruction(Group.GroupConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-new")))
+                    .thenReturn(created);
+
+            final GroupDetail detail = tools.createGroup(
+                    "sp-1", "grp-new", "Support", "sp1.example.com", 50,
+                    "America/New_York", "Main CLID", null,
+                    "Jane", null, null,
+                    null, null, "Metropolis", null, null, null, null);
+
+            final Group.GroupConsolidatedAddRequest req = reqCtor.constructed().get(0);
+            org.mockito.Mockito.verify(req).setGroupId("grp-new");
+            org.mockito.Mockito.verify(req).setGroupName("Support");
+            org.mockito.Mockito.verify(req).setTimeZone("America/New_York");
+            org.mockito.Mockito.verify(req).setCallingLineIdName("Main CLID");
+
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            assertThat(contactCaptor.getValue().getContactName()).contains("Jane");
+
+            final ArgumentCaptor<StreetAddress> addressCaptor = ArgumentCaptor.forClass(StreetAddress.class);
+            org.mockito.Mockito.verify(req).setAddress(addressCaptor.capture());
+            assertThat(addressCaptor.getValue().getCity()).contains("Metropolis");
+
+            assertThat(detail).isEqualTo(new GroupDetail(
+                    "grp-new", "Support", "sp-1", "sp1.example.com",
+                    0, 50, "Main CLID", null, "America/New_York", null, null, null));
+        }
+    }
+
+    @Test
+    void createGroupRejectsMissingUserLimit() {
+        assertThatThrownBy(() -> tools.createGroup(
+                "sp-1", "grp-new", "Support", "sp1.example.com", null,
+                null, null, null,
+                null, null, null,
+                null, null, null, null, null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("userLimit is required");
+    }
+
+    @Test
+    void createGroupThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group.GroupConsolidatedAddResponse response =
+                mock(Group.GroupConsolidatedAddResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4010");
+
+        try (MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupConsolidatedAddRequest> ignored =
+                     mockConstruction(Group.GroupConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+
+            assertThatThrownBy(() -> tools.createGroup(
+                    "sp-1", "grp-dup", "Support", "sp1.example.com", 50,
+                    null, null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("create group");
+        }
+    }
 }
