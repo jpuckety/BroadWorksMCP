@@ -2,6 +2,7 @@ package co.pitayagroup.mcp.broadworks.mcp.tools;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
@@ -22,10 +23,12 @@ import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaEmailAddress;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserFirstName;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserId;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserLastName;
+import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.enums.SearchMode;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable1Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable2Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable3Row;
+import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -303,32 +306,185 @@ public class UserTools {
         final BroadWorksServer server = connect(resourceId);
         try {
             final User user = User.getPopulatedUser(server, userId);
-            return new UserDetail(
-                    user.getUserId(),
-                    user.getGroupId(),
-                    user.getServiceProviderId(),
-                    user.getFirstName(),
-                    user.getLastName(),
-                    user.getPhoneNumber(),
-                    user.getExtension(),
-                    user.getEmailAddress(),
-                    user.getDepartmentFullPath(),
-                    user.getTitle(),
-                    user.getMobilePhoneNumber(),
-                    user.getTimeZone(),
-                    user.getLanguage(),
-                    user.getCallingLineIdFirstName(),
-                    user.getCallingLineIdLastName(),
-                    user.getCallingLineIdPhoneNumber(),
-                    ContactAddressMapper.toAddress(user.getAddress()));
+            return toDetail(user);
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_get_user failed for userId={}: {}", userId, ex.getMessage());
             throw new AlpacaException("User not found or not accessible: " + userId, ex);
         }
     }
 
+    @Tool(name = "broadworks_modify_user",
+            description = "Modify a single BroadWorks user by their (system-unique) user id. This mutates live "
+                    + "BroadWorks data. Only the fields you supply are changed (partial update); omit a field "
+                    + "to leave it unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for "
+                    + "fields you are not changing \u2014 omit them entirely, otherwise BroadWorks may reject "
+                    + "the request as invalid. For the clearable fields (phoneNumber, extension, emailAddress, "
+                    + "title, mobilePhoneNumber, callingLineIdPhoneNumber and each address field) pass an empty "
+                    + "string to clear the current value. firstName, lastName, timeZone, language, "
+                    + "callingLineIdFirstName and callingLineIdLastName cannot be cleared and are only changed "
+                    + "when a non-blank value is supplied. Passwords are intentionally not editable through this "
+                    + "tool. Returns the refreshed user detail reflecting the applied state.")
+    public UserDetail modifyUser(
+            @ToolParam(description = "The (system-unique) id of the user to modify") String userId,
+            @ToolParam(required = false,
+                    description = "First name; omit to leave unchanged (cannot be cleared)")
+            String firstName,
+            @ToolParam(required = false,
+                    description = "Last name; omit to leave unchanged (cannot be cleared)")
+            String lastName,
+            @ToolParam(required = false,
+                    description = "Phone number; omit to leave unchanged, pass an empty string to clear")
+            String phoneNumber,
+            @ToolParam(required = false,
+                    description = "Extension; omit to leave unchanged, pass an empty string to clear")
+            String extension,
+            @ToolParam(required = false,
+                    description = "Email address; omit to leave unchanged, pass an empty string to clear")
+            String emailAddress,
+            @ToolParam(required = false,
+                    description = "Title; omit to leave unchanged, pass an empty string to clear")
+            String title,
+            @ToolParam(required = false,
+                    description = "Mobile phone number; omit to leave unchanged, pass an empty string to clear")
+            String mobilePhoneNumber,
+            @ToolParam(required = false,
+                    description = "Time zone (e.g. 'America/New_York'); omit to leave unchanged (cannot be "
+                            + "cleared)")
+            String timeZone,
+            @ToolParam(required = false,
+                    description = "Language; omit to leave unchanged (cannot be cleared)")
+            String language,
+            @ToolParam(required = false,
+                    description = "Calling line id first name; omit to leave unchanged (cannot be cleared)")
+            String callingLineIdFirstName,
+            @ToolParam(required = false,
+                    description = "Calling line id last name; omit to leave unchanged (cannot be cleared)")
+            String callingLineIdLastName,
+            @ToolParam(required = false,
+                    description = "Calling line id phone number; omit to leave unchanged, pass an empty string "
+                            + "to clear")
+            String callingLineIdPhoneNumber,
+            @ToolParam(required = false,
+                    description = "Address line 1; omit to leave unchanged, pass an empty string to clear")
+            String addressLine1,
+            @ToolParam(required = false,
+                    description = "Address line 2; omit to leave unchanged, pass an empty string to clear")
+            String addressLine2,
+            @ToolParam(required = false,
+                    description = "City; omit to leave unchanged, pass an empty string to clear")
+            String city,
+            @ToolParam(required = false,
+                    description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
+                            + "abbreviation (e.g. 'GA'), as BroadWorks rejects abbreviations with error 4015 "
+                            + "('State or Province not valid'); omit to leave unchanged, pass an empty string "
+                            + "to clear")
+            String stateOrProvince,
+            @ToolParam(required = false,
+                    description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
+            String zipOrPostalCode,
+            @ToolParam(required = false,
+                    description = "Country; omit to leave unchanged, pass an empty string to clear")
+            String country,
+            @ToolParam(required = false,
+                    description = "Optional BroadWorks resource id when multiple connections are configured")
+            String resourceId) {
+        log.debug("tool broadworks_modify_user invoked (userId={}, resourceId={})", userId, resourceId);
+        final BroadWorksServer server = connect(resourceId);
+        try {
+            final User user = User.getPopulatedUser(server, userId);
+            final User.UserModifyRequest request = new User.UserModifyRequest(user);
+
+            if (isPresent(firstName)) {
+                request.setFirstName(firstName.trim());
+            }
+            if (isPresent(lastName)) {
+                request.setLastName(lastName.trim());
+            }
+            if (isPresent(timeZone)) {
+                request.setTimeZone(timeZone.trim());
+            }
+            if (isPresent(language)) {
+                request.setLanguage(language.trim());
+            }
+            if (isPresent(callingLineIdFirstName)) {
+                request.setCallingLineIdFirstName(callingLineIdFirstName.trim());
+            }
+            if (isPresent(callingLineIdLastName)) {
+                request.setCallingLineIdLastName(callingLineIdLastName.trim());
+            }
+            apply(phoneNumber, request::setPhoneNumber);
+            apply(extension, request::setExtension);
+            apply(emailAddress, request::setEmailAddress);
+            apply(title, request::setTitle);
+            apply(mobilePhoneNumber, request::setMobilePhoneNumber);
+            apply(callingLineIdPhoneNumber, request::setCallingLineIdPhoneNumber);
+
+            // Build a fresh StreetAddress and set only the supplied sub-fields. OCI treats an omitted child
+            // element as "leave unchanged" and a nil element as "clear", so we must NOT resend the current
+            // values of untouched sub-fields: doing so re-validates stale data (e.g. an invalid
+            // stateOrProvince), which is what caused BroadWorks error 4015 for service providers.
+            if (addressLine1 != null || addressLine2 != null || city != null
+                    || stateOrProvince != null || zipOrPostalCode != null || country != null) {
+                final StreetAddress address = new StreetAddress();
+                apply(addressLine1, address::setAddressLine1);
+                apply(addressLine2, address::setAddressLine2);
+                apply(city, address::setCity);
+                apply(stateOrProvince, address::setStateOrProvince);
+                apply(zipOrPostalCode, address::setZipOrPostalCode);
+                apply(country, address::setCountry);
+                request.setAddress(address);
+            }
+
+            final DefaultResponse response = request.fire();
+            AlpacaRequests.ensureSuccess(response, "modify user " + userId);
+
+            final User updated = User.getPopulatedUser(server, userId);
+            log.debug("tool broadworks_modify_user succeeded (userId={})", userId);
+            return toDetail(updated);
+        } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_modify_user failed for userId={}: {}", userId, ex.getMessage());
+            throw new AlpacaException("User not found or not accessible: " + userId, ex);
+        }
+    }
+
+    /** Maps a populated {@link User} to a compact {@link UserDetail} DTO. */
+    private static UserDetail toDetail(User user) {
+        return new UserDetail(
+                user.getUserId(),
+                user.getGroupId(),
+                user.getServiceProviderId(),
+                user.getFirstName(),
+                user.getLastName(),
+                user.getPhoneNumber(),
+                user.getExtension(),
+                user.getEmailAddress(),
+                user.getDepartmentFullPath(),
+                user.getTitle(),
+                user.getMobilePhoneNumber(),
+                user.getTimeZone(),
+                user.getLanguage(),
+                user.getCallingLineIdFirstName(),
+                user.getCallingLineIdLastName(),
+                user.getCallingLineIdPhoneNumber(),
+                ContactAddressMapper.toAddress(user.getAddress()));
+    }
+
     private static boolean isPresent(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /**
+     * Applies a tool-supplied string using set/clear/leave semantics against an Alpaca setter: a
+     * {@code null} value leaves the field unchanged (the setter is never called), a blank value clears it
+     * by passing {@code null} to the setter (mapped to {@link java.util.Optional#empty()} → a nil element),
+     * and any other value sets the trimmed string. See {@code ServiceProviderTools#apply} for the full
+     * rationale on why clearing goes through the setter rather than {@code unsetX()}.
+     */
+    private static void apply(String value, Consumer<String> setter) {
+        if (value == null) {
+            return;
+        }
+        setter.accept(value.isBlank() ? null : value.trim());
     }
 
     private BroadWorksServer connect(String resourceId) {

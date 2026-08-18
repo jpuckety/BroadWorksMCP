@@ -34,12 +34,15 @@ import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserFirstName;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserId;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaUserLastName;
 import co.ecg.alpaca.toolkit.generated.datatypes.SearchCriteriaDn;
+import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable1Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable2Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable3Row;
+import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -312,6 +315,135 @@ class UserToolsTest {
             assertThatThrownBy(() -> tools.getUser("missing", null))
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("User not found or not accessible: missing");
+        }
+    }
+
+    @Test
+    void modifyUserAppliesSuppliedFieldsAndReturnsRefreshedDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+
+        final User refreshed = mock(User.class);
+        when(refreshed.getUserId()).thenReturn("user-9@example.com");
+        when(refreshed.getGroupId()).thenReturn("grp-9");
+        when(refreshed.getServiceProviderId()).thenReturn("sp-1");
+        when(refreshed.getFirstName()).thenReturn("Janet");
+        when(refreshed.getLastName()).thenReturn("Doe");
+        when(refreshed.getPhoneNumber()).thenReturn("+1-555-0200");
+        when(refreshed.getExtension()).thenReturn("1001");
+        when(refreshed.getEmailAddress()).thenReturn("janet@example.com");
+        when(refreshed.getDepartmentFullPath()).thenReturn("Sales/West");
+        when(refreshed.getTitle()).thenReturn("Director");
+        when(refreshed.getMobilePhoneNumber()).thenReturn("+1-555-0199");
+        when(refreshed.getTimeZone()).thenReturn("America/New_York");
+        when(refreshed.getLanguage()).thenReturn("English");
+        when(refreshed.getCallingLineIdFirstName()).thenReturn("J");
+        when(refreshed.getCallingLineIdLastName()).thenReturn("D");
+        when(refreshed.getCallingLineIdPhoneNumber()).thenReturn("+1-555-0101");
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserModifyRequest> reqCtor =
+                     mockConstruction(User.UserModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-9@example.com")))
+                    .thenReturn(user, refreshed);
+
+            final UserDetail detail = tools.modifyUser(
+                    "user-9@example.com", "Janet", null, "+1-555-0200", null,
+                    "janet@example.com", "Director", null, "America/New_York", null,
+                    null, null, null,
+                    null, null, "Metropolis", null, null, null, null);
+
+            final User.UserModifyRequest req = reqCtor.constructed().get(0);
+            verify(req).setFirstName("Janet");
+            verify(req).setPhoneNumber("+1-555-0200");
+            verify(req).setEmailAddress("janet@example.com");
+            verify(req).setTitle("Director");
+            verify(req).setTimeZone("America/New_York");
+            verify(req, never()).setLastName(any());
+
+            // Only supplied sub-fields land on the fresh StreetAddress; untouched ones stay unset
+            // (raw null Optional) so they are omitted from the OCI request rather than re-sent.
+            final ArgumentCaptor<StreetAddress> addressCaptor = ArgumentCaptor.forClass(StreetAddress.class);
+            verify(req).setAddress(addressCaptor.capture());
+            assertThat(addressCaptor.getValue().getCity()).contains("Metropolis");
+            assertThat(addressCaptor.getValue().getCountry()).isNull();
+
+            assertThat(detail).isEqualTo(new UserDetail(
+                    "user-9@example.com", "grp-9", "sp-1", "Janet", "Doe",
+                    "+1-555-0200", "1001", "janet@example.com", "Sales/West", "Director",
+                    "+1-555-0199", "America/New_York", "English", "J", "D", "+1-555-0101", null));
+        }
+    }
+
+    @Test
+    void modifyUserClearsClearableFieldsWithEmptyStringButNeverClearsName() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+
+        final User refreshed = mock(User.class);
+        when(refreshed.getUserId()).thenReturn("user-9@example.com");
+        when(refreshed.getGroupId()).thenReturn("grp-9");
+        when(refreshed.getServiceProviderId()).thenReturn("sp-1");
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserModifyRequest> reqCtor =
+                     mockConstruction(User.UserModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-9@example.com")))
+                    .thenReturn(user, refreshed);
+
+            tools.modifyUser(
+                    "user-9@example.com", "", null, "", null,
+                    null, "", null, null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null);
+
+            final User.UserModifyRequest req = reqCtor.constructed().get(0);
+            // Name is never cleared: a blank first name is ignored (never passed to the setter).
+            verify(req, never()).setFirstName(any());
+            // A blank clearable field clears via setX(null) -> Optional.empty() (nil), NOT unsetX().
+            verify(req).setPhoneNumber(null);
+            verify(req, never()).unsetPhoneNumber();
+            verify(req).setTitle(null);
+            verify(req, never()).unsetTitle();
+        }
+    }
+
+    @Test
+    void modifyUserThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4010");
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserModifyRequest> ignored =
+                     mockConstruction(User.UserModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-9@example.com")))
+                    .thenReturn(user);
+
+            assertThatThrownBy(() -> tools.modifyUser(
+                    "user-9@example.com", "Janet", null, null, null,
+                    null, null, null, null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("modify user");
         }
     }
 }

@@ -46,8 +46,10 @@ class McpToolsListDumperTest {
                 "broadworks_modify_service_provider",
                 "broadworks_list_groups",
                 "broadworks_get_group",
+                "broadworks_modify_group",
                 "broadworks_list_users",
-                "broadworks_get_user");
+                "broadworks_get_user",
+                "broadworks_modify_user");
     }
 
     @Test

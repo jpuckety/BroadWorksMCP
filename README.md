@@ -329,8 +329,10 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_modify_service_provider` | Modify a service provider (partial update: name, default domain, support email, contact, address). Mutates live BroadWorks data. |
 | `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
+| `broadworks_modify_group` | Modify a group (partial update: name, default domain, user limit, calling line id, time zone, location dialing code, contact, address). Mutates live BroadWorks data. |
 | `broadworks_list_users` | List (or search) users within a group, service provider, or system-wide. |
 | `broadworks_get_user` | Get a user by their (system-unique) user id. |
+| `broadworks_modify_user` | Modify a user (partial update: name, phone/extension, email, title, mobile, time zone, language, calling line id, address; passwords excluded). Mutates live BroadWorks data. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
 `AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set

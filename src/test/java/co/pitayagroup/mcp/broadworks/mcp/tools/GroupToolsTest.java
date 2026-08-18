@@ -1,6 +1,8 @@
 package co.pitayagroup.mcp.broadworks.mcp.tools;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
@@ -15,6 +17,7 @@ import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
+import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 import co.pitayagroup.mcp.broadworks.mcp.model.AddressInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.ContactInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
@@ -27,9 +30,11 @@ import co.ecg.alpaca.toolkit.generated.ServiceProvider;
 import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
 import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable1Row;
+import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -253,6 +258,147 @@ class GroupToolsTest {
                     null, null, null, null, null, null, null, null));
             assertThat(detail.contact()).isNull();
             assertThat(detail.address()).isNull();
+        }
+    }
+
+    @Test
+    void modifyGroupAppliesSuppliedFieldsAndReturnsRefreshedDetail() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+
+        final Group refreshed = mock(Group.class);
+        when(refreshed.getGroupId()).thenReturn("grp-9");
+        when(refreshed.getGroupName()).thenReturn("Support New");
+        when(refreshed.getServiceProviderId()).thenReturn("sp-1");
+        when(refreshed.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(refreshed.getUserCount()).thenReturn(12);
+        when(refreshed.getUserLimit()).thenReturn(75);
+        when(refreshed.getCallingLineIdName()).thenReturn("New CLID");
+        when(refreshed.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(refreshed.getTimeZone()).thenReturn("America/New_York");
+        when(refreshed.getLocationDialingCode()).thenReturn(null);
+        when(refreshed.getContact()).thenReturn(null);
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupModifyRequest> reqCtor =
+                     mockConstruction(Group.GroupModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-9")))
+                    .thenReturn(group, refreshed);
+
+            final GroupDetail detail = tools.modifyGroup(
+                    "sp-1", "grp-9", "Support New", null, 75,
+                    "New CLID", null, "America/New_York", null,
+                    null, null, "jane@sp1.example.com",
+                    null, null, "Metropolis", null, null, null, null);
+
+            final Group.GroupModifyRequest req = reqCtor.constructed().get(0);
+            org.mockito.Mockito.verify(req).setGroupName("Support New");
+            org.mockito.Mockito.verify(req).setUserLimit(75);
+            org.mockito.Mockito.verify(req).setCallingLineIdName("New CLID");
+            org.mockito.Mockito.verify(req).setTimeZone("America/New_York");
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setDefaultDomain(any());
+
+            // Only supplied sub-fields land on the fresh Contact/StreetAddress; untouched ones stay unset
+            // (raw null Optional) so they are omitted from the OCI request rather than re-sent.
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            assertThat(contactCaptor.getValue().getContactEmail()).contains("jane@sp1.example.com");
+            assertThat(contactCaptor.getValue().getContactName()).isNull();
+
+            final ArgumentCaptor<StreetAddress> addressCaptor = ArgumentCaptor.forClass(StreetAddress.class);
+            org.mockito.Mockito.verify(req).setAddress(addressCaptor.capture());
+            assertThat(addressCaptor.getValue().getCity()).contains("Metropolis");
+            assertThat(addressCaptor.getValue().getCountry()).isNull();
+
+            assertThat(detail).isEqualTo(new GroupDetail(
+                    "grp-9", "Support New", "sp-1", "sp1.example.com",
+                    12, 75, "New CLID", null, "America/New_York", null, null, null));
+        }
+    }
+
+    @Test
+    void modifyGroupClearsClearableFieldsWithEmptyStringButNeverClearsName() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+
+        final Group refreshed = mock(Group.class);
+        when(refreshed.getGroupId()).thenReturn("grp-9");
+        when(refreshed.getGroupName()).thenReturn("Support");
+        when(refreshed.getServiceProviderId()).thenReturn("sp-1");
+        when(refreshed.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(refreshed.getUserCount()).thenReturn(null);
+        when(refreshed.getUserLimit()).thenReturn(null);
+        when(refreshed.getCallingLineIdName()).thenReturn(null);
+        when(refreshed.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(refreshed.getTimeZone()).thenReturn(null);
+        when(refreshed.getLocationDialingCode()).thenReturn(null);
+        when(refreshed.getContact()).thenReturn(null);
+        when(refreshed.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupModifyRequest> reqCtor =
+                     mockConstruction(Group.GroupModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-9")))
+                    .thenReturn(group, refreshed);
+
+            tools.modifyGroup(
+                    "sp-1", "grp-9", "", null, null,
+                    "", null, null, null,
+                    "", null, null,
+                    null, null, null, null, null, null, null);
+
+            final Group.GroupModifyRequest req = reqCtor.constructed().get(0);
+            // Name is never cleared: a blank display name is ignored (never passed to the setter).
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setGroupName(any());
+            // A blank clearable field clears via setX(null) -> Optional.empty() (nil), NOT unsetX().
+            org.mockito.Mockito.verify(req).setCallingLineIdName(null);
+            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).unsetCallingLineIdName();
+
+            final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
+            org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
+            // Cleared field is present-but-empty (Optional.empty()), which serializes as a nil element.
+            assertThat(contactCaptor.getValue().getContactName()).isNotNull().isEmpty();
+        }
+    }
+
+    @Test
+    void modifyGroupThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4010");
+
+        try (MockedConstruction<ServiceProvider> spCtor = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupModifyRequest> ignored =
+                     mockConstruction(Group.GroupModifyRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-9")))
+                    .thenReturn(group);
+
+            assertThatThrownBy(() -> tools.modifyGroup(
+                    "sp-1", "grp-9", "Support New", null, null,
+                    null, null, null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("modify group");
         }
     }
 }

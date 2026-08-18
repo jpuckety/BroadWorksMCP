@@ -86,7 +86,9 @@ class McpToolsListIntegrationTest {
                 .contains("broadworks_modify_service_provider")
                 .contains("broadworks_list_groups")
                 .contains("broadworks_get_group")
+                .contains("broadworks_modify_group")
                 .contains("broadworks_list_users")
-                .contains("broadworks_get_user");
+                .contains("broadworks_get_user")
+                .contains("broadworks_modify_user");
     }
 }
