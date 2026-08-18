@@ -41,6 +41,20 @@ accepted by, returned from, or logged by any tool.
 | [`broadworks_get_group`](#broadworks_get_group) | Get a single group by id. | `GroupDetail` |
 | [`broadworks_list_users`](#broadworks_list_users) | List / search users (per group, service provider, or system-wide). | `Page` |
 | [`broadworks_get_user`](#broadworks_get_user) | Get a single user by id. | `UserDetail` |
+| [`broadworks_list_service_packs`](#broadworks_list_service_packs) | List the service packs defined on a service provider. | `array` of `ServicePackSummary` |
+| [`broadworks_get_service_pack`](#broadworks_get_service_pack) | Get a single service pack's detail. | `ServicePackDetail` |
+| [`broadworks_create_service_pack`](#broadworks_create_service_pack) | Create a service pack (mutates live data). | `ServicePackDetail` |
+| [`broadworks_modify_service_pack`](#broadworks_modify_service_pack) | Modify a service pack; add-only for services (mutates live data). | `ServicePackDetail` |
+| [`broadworks_delete_service_pack`](#broadworks_delete_service_pack) | Delete a service pack (mutates live data). | `string` |
+| [`broadworks_get_service_provider_service_authorization`](#broadworks_get_service_provider_service_authorization) | Get a service provider's user/group service authorization. | `ServiceAuthorizationSet` |
+| [`broadworks_modify_service_provider_service_authorization`](#broadworks_modify_service_provider_service_authorization) | Modify a service provider's service authorization (mutates live data). | `ServiceAuthorizationSet` |
+| [`broadworks_get_group_service_authorization`](#broadworks_get_group_service_authorization) | Get a group's service-pack/group/user service authorization. | `ServiceAuthorizationSet` |
+| [`broadworks_modify_group_service_authorization`](#broadworks_modify_group_service_authorization) | Modify a group's service authorization (mutates live data). | `ServiceAuthorizationSet` |
+| [`broadworks_assign_group_services`](#broadworks_assign_group_services) | Assign group services to a group (mutates live data). | `array` of `string` |
+| [`broadworks_unassign_group_services`](#broadworks_unassign_group_services) | Unassign group services from a group (mutates live data). | `array` of `string` |
+| [`broadworks_get_user_assigned_services`](#broadworks_get_user_assigned_services) | Get a user's assigned group/user services. | `AssignedServicesResult` |
+| [`broadworks_assign_user_services`](#broadworks_assign_user_services) | Assign user services / service packs to a user (mutates live data). | `AssignedServicesResult` |
+| [`broadworks_unassign_user_services`](#broadworks_unassign_user_services) | Unassign user services / service packs from a user (mutates live data). | `AssignedServicesResult` |
 
 ---
 
@@ -228,6 +242,253 @@ Get details for a single BroadWorks user by their (system-unique) user id.
 
 ---
 
+## Service pack tools
+
+A service pack is a named bundle of user services defined on a service provider; it can be authorized
+to groups and assigned to users. Service names throughout these tools are BroadWorks display names
+(e.g. `Call Waiting`) and are validated against the known user services — an unknown name is rejected.
+
+### `broadworks_list_service_packs`
+
+List the names of the service packs defined on a service provider.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the service packs. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** an `array` of [`ServicePackSummary`](#servicepacksummary) objects.
+
+---
+
+### `broadworks_get_service_pack`
+
+Get the details of a single service pack, including its description, availability, licensed quantity,
+assigned/allowed quantities, and included user services.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the service pack. |
+| `servicePackName` | `string` | required | The name of the service pack to inspect. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`ServicePackDetail`](#servicepackdetail) object.
+
+---
+
+### `broadworks_create_service_pack`
+
+Create a new service pack on a service provider. **Mutates live BroadWorks data.** Fails if a pack
+with the same name already exists.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that will own the new service pack. |
+| `servicePackName` | `string` | required | The name for the new service pack (unique within the service provider). |
+| `description` | `string` | optional | Description for the service pack. |
+| `availableForUse` | `boolean` | optional | Whether the pack is available for assignment; omit to use the BroadWorks default. |
+| `quantity` | `integer` | optional | Licensed quantity as a positive integer; omit when `unlimited=true`. |
+| `unlimited` | `boolean` | optional | Set `true` for an unlimited licensed quantity; when `true`, `quantity` is ignored. |
+| `services` | `array` of `string` | optional | User service display names to include in the pack (validated). The included services are fixed at creation time. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the newly created [`ServicePackDetail`](#servicepackdetail).
+
+---
+
+### `broadworks_modify_service_pack`
+
+Modify an existing service pack (partial update: omitted fields are left unchanged). **Mutates live
+BroadWorks data.**
+
+> **Included user services cannot be changed in place.** BroadWorks offers no way to remove or replace
+> a service in a pack — the `addServices` parameter can only **add** services (via a separate
+> add-service request). To remove a service, delete and recreate the pack.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the service pack. |
+| `servicePackName` | `string` | required | The current name of the service pack to modify. |
+| `newServicePackName` | `string` | optional | New name for the pack; omit to leave unchanged (cannot be cleared). |
+| `description` | `string` | optional | New description; omit to leave unchanged, pass an empty string to clear. |
+| `availableForUse` | `boolean` | optional | Whether the pack is available for assignment; omit to leave unchanged. |
+| `quantity` | `integer` | optional | New licensed quantity as a positive integer; omit to leave unchanged. Ignored when `unlimited=true`. |
+| `unlimited` | `boolean` | optional | Set `true` to make the licensed quantity unlimited; omit to leave unchanged. |
+| `addServices` | `array` of `string` | optional | User service display names to **add** to the pack (add-only; validated). |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the refreshed [`ServicePackDetail`](#servicepackdetail).
+
+---
+
+### `broadworks_delete_service_pack`
+
+Delete a service pack from a service provider. **Mutates live BroadWorks data and is irreversible.**
+BroadWorks may reject the deletion if the pack is still authorized to groups or assigned to users.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the service pack. |
+| `servicePackName` | `string` | required | The name of the service pack to delete. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a `string` confirmation message, e.g. `Deleted service pack '<name>' from service provider <id>`.
+
+---
+
+## Service authorization & assignment tools
+
+Service authorization controls how many of each user service, group service, and service pack a
+service provider grants to itself and a group grants to itself. Assignment/activation controls which
+group services are assigned to a group and which user services + service packs are assigned to a user.
+Modifications follow a partial-update discipline: only the entries you supply are sent, and BroadWorks
+leaves every omitted service untouched. Service names are BroadWorks display names (e.g. `Call
+Waiting`), validated against the known user/group services — an unknown name is rejected.
+
+The authorization-modify tools accept arrays of [`ServiceAuthorization`](#serviceauthorization)
+entries. For each entry set `authorized=true` with a `quantity` (a positive integer, or
+`unlimited=true`) to grant, or `authorized=false` to revoke (unauthorize) the service.
+
+### `broadworks_get_service_provider_service_authorization`
+
+Get a service provider's user- and group-service authorization. Service packs are authorized at the
+group level, so the `servicePacks` list is empty here.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id whose authorization to read. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`ServiceAuthorizationSet`](#serviceauthorizationset) (`servicePacks` empty).
+
+---
+
+### `broadworks_modify_service_provider_service_authorization`
+
+Modify a service provider's user/group service authorization. **Mutates live BroadWorks data.** At
+least one entry (user or group) is required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id whose authorization to change. |
+| `userServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | optional | User service authorization entries to change; omit services you are not changing. |
+| `groupServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | optional | Group service authorization entries to change; omit services you are not changing. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the refreshed [`ServiceAuthorizationSet`](#serviceauthorizationset).
+
+---
+
+### `broadworks_get_group_service_authorization`
+
+Get a group's service-pack, group-service, and user-service authorization.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the group. |
+| `groupId` | `string` | required | The id of the group whose authorization to read. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`ServiceAuthorizationSet`](#serviceauthorizationset).
+
+---
+
+### `broadworks_modify_group_service_authorization`
+
+Modify a group's service-pack/group/user service authorization. **Mutates live BroadWorks data.** At
+least one entry (service pack, group service, or user service) is required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the group. |
+| `groupId` | `string` | required | The id of the group whose authorization to change. |
+| `userServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | optional | User service authorization entries to change; omit services you are not changing. |
+| `groupServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | optional | Group service authorization entries to change; omit services you are not changing. |
+| `servicePacks` | `array` of [`ServiceAuthorization`](#serviceauthorization) | optional | Service pack authorization entries to change; the `serviceName` field carries the service pack name. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the refreshed [`ServiceAuthorizationSet`](#serviceauthorizationset).
+
+---
+
+### `broadworks_assign_group_services`
+
+Assign one or more group services to a group so it can use them. **Mutates live BroadWorks data.** The
+group must already be authorized for a service before it can be assigned.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the group. |
+| `groupId` | `string` | required | The id of the group to assign services to. |
+| `serviceNames` | `array` of `string` | required | Group service display names to assign (e.g. `Auto Attendant`). |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** an `array` of `string` — the group service names that were assigned.
+
+---
+
+### `broadworks_unassign_group_services`
+
+Unassign one or more group services from a group. **Mutates live BroadWorks data.**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `serviceProviderId` | `string` | required | The service provider id that owns the group. |
+| `groupId` | `string` | required | The id of the group to unassign services from. |
+| `serviceNames` | `array` of `string` | required | Group service display names to unassign (e.g. `Auto Attendant`). |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** an `array` of `string` — the group service names that were unassigned.
+
+---
+
+### `broadworks_get_user_assigned_services`
+
+Get the services assigned to a user, split into group services and user services (each with an active
+flag).
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | required | The id of the user whose assigned services to read. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** an [`AssignedServicesResult`](#assignedservicesresult) object.
+
+---
+
+### `broadworks_assign_user_services`
+
+Assign one or more user services and/or service packs to a user. **Mutates live BroadWorks data.** The
+group must be authorized for a service or pack before it can be assigned to a user. At least one
+service name or service pack name is required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | required | The id of the user to assign services to. |
+| `serviceNames` | `array` of `string` | optional | User service display names to assign (e.g. `Call Waiting`); omit if only assigning service packs. |
+| `servicePackNames` | `array` of `string` | optional | Service pack names to assign; omit if only assigning individual user services. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the refreshed [`AssignedServicesResult`](#assignedservicesresult).
+
+---
+
+### `broadworks_unassign_user_services`
+
+Unassign one or more user services and/or service packs from a user. **Mutates live BroadWorks data.**
+At least one service name or service pack name is required.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `userId` | `string` | required | The id of the user to unassign services from. |
+| `serviceNames` | `array` of `string` | optional | User service display names to unassign (e.g. `Call Waiting`); omit if only unassigning service packs. |
+| `servicePackNames` | `array` of `string` | optional | Service pack names to unassign; omit if only unassigning individual user services. |
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** the refreshed [`AssignedServicesResult`](#assignedservicesresult).
+
+---
+
 ## Return schemas
 
 ### `ConnectionSummary`
@@ -284,6 +545,73 @@ omitted).
 | `callingLineIdLastName` | `string` | The user's calling line id last name, if any. |
 | `callingLineIdPhoneNumber` | `string` | The user's calling line id phone number, if any. |
 | `address` | `object` | The physical (street) address, or `null` when absent. |
+
+### `ServicePackSummary`
+
+Summary of a service pack, as returned by the list operation.
+
+| Field | Type | Description |
+|---|---|---|
+| `servicePackName` | `string` | The service pack name. |
+
+### `ServicePackDetail`
+
+| Field | Type | Description |
+|---|---|---|
+| `servicePackName` | `string` | The service pack name. |
+| `description` | `string` | The service pack description, or `null` when absent. |
+| `availableForUse` | `boolean` | Whether the pack is available for assignment, if reported. |
+| `quantity` | [`ServiceQuantity`](#servicequantity) | The licensed quantity (finite or unlimited), if reported. |
+| `assignedQuantity` | `integer` | The number currently assigned, if reported. |
+| `allowedQuantity` | [`ServiceQuantity`](#servicequantity) | The maximum quantity that may be assigned, if reported. |
+| `userServices` | `array` of `string` | The display names of the user services included in the pack. |
+
+### `ServiceQuantity`
+
+A BroadWorks service/service-pack quantity: either a finite count or an unlimited allocation.
+
+| Field | Type | Description |
+|---|---|---|
+| `quantity` | `integer` | The finite count, or `null` when unlimited or unspecified. |
+| `unlimited` | `boolean` | Whether the allocation is unlimited. |
+
+### `ServiceAuthorization`
+
+Authorization state for a single service or service pack.
+
+| Field | Type | Description |
+|---|---|---|
+| `serviceName` | `string` | The service (or service pack) display name. |
+| `authorized` | `boolean` | Whether the service is authorized (`false` means explicitly unauthorized). |
+| `quantity` | [`ServiceQuantity`](#servicequantity) | The authorized quantity (finite or unlimited), or `null` when unauthorized or unspecified. |
+
+### `ServiceAuthorizationSet`
+
+A snapshot of the service authorization state at a service provider or group level.
+
+| Field | Type | Description |
+|---|---|---|
+| `userServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | The user service authorizations. |
+| `groupServices` | `array` of [`ServiceAuthorization`](#serviceauthorization) | The group service authorizations. |
+| `servicePacks` | `array` of [`ServiceAuthorization`](#serviceauthorization) | The service pack authorizations (empty for a service-provider-level read). |
+
+### `AssignedService`
+
+A single service assigned to a group or user.
+
+| Field | Type | Description |
+|---|---|---|
+| `serviceName` | `string` | The service display name. |
+| `active` | `boolean` | Whether the service is currently active. |
+
+### `AssignedServicesResult`
+
+The set of services assigned to a user, split by the level that grants them.
+
+| Field | Type | Description |
+|---|---|---|
+| `groupServices` | `array` of [`AssignedService`](#assignedservice) | The group services assigned to the user. |
+| `userServices` | `array` of [`AssignedService`](#assignedservice) | The user services assigned to the user. |
 
 ### The `Page` envelope
 

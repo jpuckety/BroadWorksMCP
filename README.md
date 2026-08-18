@@ -336,6 +336,20 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_get_user` | Get a user by their (system-unique) user id. |
 | `broadworks_modify_user` | Modify a user (partial update: name, phone/extension, email, title, mobile, time zone, language, calling line id, address; passwords excluded). Mutates live BroadWorks data. |
 | `broadworks_create_user` | Create a user within a group from id, first/last name, and optional password, calling line id, phone/extension, email, title, mobile, time zone, language, address. Mutates live BroadWorks data. |
+| `broadworks_list_service_packs` | List the names of the service packs defined on a service provider. |
+| `broadworks_get_service_pack` | Get a service pack's detail (description, availability, licensed/assigned/allowed quantity, included user services). |
+| `broadworks_create_service_pack` | Create a service pack on a service provider from name and optional description, availability, quantity (integer or unlimited), and included user services. Mutates live BroadWorks data. |
+| `broadworks_modify_service_pack` | Modify a service pack (partial update: new name, description, availability, quantity). Included user services can only be **added** (via `addServices`); removal requires delete + recreate. Mutates live BroadWorks data. |
+| `broadworks_delete_service_pack` | Delete a service pack from a service provider (irreversible; rejected if still in use). Mutates live BroadWorks data. |
+| `broadworks_get_service_provider_service_authorization` | Get a service provider's user- and group-service authorization (authorized flag, quantity/unlimited). |
+| `broadworks_modify_service_provider_service_authorization` | Modify a service provider's user/group service authorization (only supplied entries change; supports quantity/unlimited/unauthorized). Mutates live BroadWorks data. |
+| `broadworks_get_group_service_authorization` | Get a group's service-pack, group-service, and user-service authorization. |
+| `broadworks_modify_group_service_authorization` | Modify a group's service-pack/group/user service authorization (only supplied entries change; supports quantity/unlimited/unauthorized). Mutates live BroadWorks data. |
+| `broadworks_assign_group_services` | Assign one or more group services to a group. Mutates live BroadWorks data. |
+| `broadworks_unassign_group_services` | Unassign one or more group services from a group. Mutates live BroadWorks data. |
+| `broadworks_get_user_assigned_services` | Get a user's assigned group services and user services (each with its active flag). |
+| `broadworks_assign_user_services` | Assign one or more user services and/or service packs to a user. Mutates live BroadWorks data. |
+| `broadworks_unassign_user_services` | Unassign one or more user services and/or service packs from a user. Mutates live BroadWorks data. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
 `AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set

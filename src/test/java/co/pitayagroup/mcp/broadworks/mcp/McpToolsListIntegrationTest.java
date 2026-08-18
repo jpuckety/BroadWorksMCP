@@ -92,6 +92,20 @@ class McpToolsListIntegrationTest {
                 .contains("broadworks_list_users")
                 .contains("broadworks_get_user")
                 .contains("broadworks_modify_user")
-                .contains("broadworks_create_user");
+                .contains("broadworks_create_user")
+                .contains("broadworks_list_service_packs")
+                .contains("broadworks_get_service_pack")
+                .contains("broadworks_create_service_pack")
+                .contains("broadworks_modify_service_pack")
+                .contains("broadworks_delete_service_pack")
+                .contains("broadworks_get_service_provider_service_authorization")
+                .contains("broadworks_modify_service_provider_service_authorization")
+                .contains("broadworks_get_group_service_authorization")
+                .contains("broadworks_modify_group_service_authorization")
+                .contains("broadworks_assign_group_services")
+                .contains("broadworks_unassign_group_services")
+                .contains("broadworks_get_user_assigned_services")
+                .contains("broadworks_assign_user_services")
+                .contains("broadworks_unassign_user_services");
     }
 }

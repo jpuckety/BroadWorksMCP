@@ -52,7 +52,21 @@ class McpToolsListDumperTest {
                 "broadworks_list_users",
                 "broadworks_get_user",
                 "broadworks_modify_user",
-                "broadworks_create_user");
+                "broadworks_create_user",
+                "broadworks_list_service_packs",
+                "broadworks_get_service_pack",
+                "broadworks_create_service_pack",
+                "broadworks_modify_service_pack",
+                "broadworks_delete_service_pack",
+                "broadworks_get_service_provider_service_authorization",
+                "broadworks_modify_service_provider_service_authorization",
+                "broadworks_get_group_service_authorization",
+                "broadworks_modify_group_service_authorization",
+                "broadworks_assign_group_services",
+                "broadworks_unassign_group_services",
+                "broadworks_get_user_assigned_services",
+                "broadworks_assign_user_services",
+                "broadworks_unassign_user_services");
     }
 
     @Test

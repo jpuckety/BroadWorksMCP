@@ -2,7 +2,9 @@ package co.pitayagroup.mcp.broadworks.mcp;
 
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ServicePackTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.UserTools;
 
 import org.springframework.ai.tool.ToolCallback;
@@ -103,7 +105,8 @@ public final class McpToolsListDumper {
     private static ObjectNode toolsListResponse(String serverUrl) {
         final MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
                 .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null),
-                        new GroupTools(null), new UserTools(null))
+                        new GroupTools(null), new UserTools(null), new ServicePackTools(null),
+                        new ServiceTools(null))
                 .build();
 
         final ArrayNode tools = MAPPER.createArrayNode();
