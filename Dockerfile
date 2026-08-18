@@ -21,12 +21,15 @@ COPY scripts/ ./scripts/
 # reactor before the profile's initialize-phase install-file executions have
 # populated the local repo, and a clean container has no other source for them
 # (hence "Could not find artifact co.ecg:alpaca-*:jar:... in central").
-RUN mvn -B -Pinstall-alpaca initialize
+RUN --mount=type=cache,target=/root/.m2 mvn -B -Pinstall-alpaca initialize
 
 # Copy sources and build. The co.ecg:* dependencies now resolve from the local
 # Maven repository populated above.
 COPY src/ ./src/
-RUN mvn -B -DskipTests clean package
+# The Maven local repository (/root/.m2) is persisted across builds via a BuildKit
+# cache mount, so dependencies are downloaded once and reused instead of being
+# re-fetched on every build.
+RUN --mount=type=cache,target=/root/.m2 mvn -B -DskipTests clean package
 
 # ============================================================================
 # Runtime stage: minimal JRE 21 image running the repackaged jar.

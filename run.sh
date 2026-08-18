@@ -445,16 +445,21 @@ cmd_deploy() {
     warn "No certificateArn provided — the ALB will listen on HTTP only (development)."
     warn "Provide one via: ./run.sh deploy arn:aws:acm:... | CERTIFICATE_ARN=arn... ./run.sh deploy"
   fi
-  log "Deploying the BroadWorksMcpStack (builds the Docker image as a CDK asset)..."
+
+  cmd_build
+
   local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
   # Capture the stack outputs (ALB DNS / public URL) so the deployed MCP endpoint can be surfaced
   # alongside its tool catalogue once the deployment succeeds.
   local outputs_file; outputs_file="$(mktemp -t bwmcp-cdk-outputs.XXXXXX)"
   # shellcheck disable=SC2064
   trap "rm -f '${outputs_file}'" RETURN
-  cdk_run deploy --outputs-file "${outputs_file}" "${args[@]+"${args[@]}"}" "$@"
+
   # Surface MCP-compliant tools/list, resources/list and prompts/list responses for the deployment.
   emit_mcp_registration "${outputs_file}"
+
+  log "Deploying the BroadWorksMcpStack (builds the Docker image as a CDK asset)..."
+  cdk_run deploy --outputs-file "${outputs_file}" "${args[@]+"${args[@]}"}" "$@"
 }
 
 cmd_undeploy() {
