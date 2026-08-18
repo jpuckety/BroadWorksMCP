@@ -139,7 +139,9 @@ export class BroadWorksMcpStack extends cdk.Stack {
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: dataKey,
       timeToLiveAttribute: 'ttl',
-      pointInTimeRecovery: true,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     sessionsTable.addGlobalSecondaryIndex({
@@ -158,7 +160,9 @@ export class BroadWorksMcpStack extends cdk.Stack {
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: dataKey,
       timeToLiveAttribute: 'ttl',
-      pointInTimeRecovery: true,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
@@ -168,7 +172,9 @@ export class BroadWorksMcpStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: dataKey,
-      pointInTimeRecovery: true,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
@@ -237,7 +243,10 @@ export class BroadWorksMcpStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    const cluster = new ecs.Cluster(this, 'Cluster', { vpc, containerInsights: true });
+    const cluster = new ecs.Cluster(this, 'Cluster', {
+      vpc,
+      containerInsightsV2: ecs.ContainerInsights.ENABLED,
+    });
 
     // TLS is mandatory. Plain HTTP is only possible behind an explicit development opt-out.
     const allowInsecureHttp: boolean =
@@ -324,9 +333,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
       },
     });
 
-    // ---- Container hardening ----------------------------------------------
-    // Immutable root filesystem; everything the JVM writes to is an explicit ephemeral volume:
-    // /app/.cache holds the JCS disk cache (cache.ccf DiskPath=.cache/jcs) and /tmp the JVM's
+    // ---- Container hardening ----------------------------------- JCS disk cache (cache.ccf DiskPath=.cache/jcs) and /tmp the JVM's
     // temp/hsperfdata files (Tomcat's tempDir, hsperfdata, ...).
     const taskDefinition = service.taskDefinition;
     taskDefinition.addVolume({ name: 'app-cache' });
