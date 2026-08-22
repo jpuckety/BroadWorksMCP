@@ -189,7 +189,7 @@ public class GroupTools {
             description = "Modify a single BroadWorks group within a service provider. This mutates live "
                     + "BroadWorks data. Only the fields you supply are changed (partial update); omit a field "
                     + "to leave it unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for "
-                    + "fields you are not changing \u2014 omit them entirely, otherwise BroadWorks may reject "
+                    + "fields you are not changing — omit them entirely, otherwise BroadWorks may reject "
                     + "the request as invalid. For the clearable fields (callingLineIdName, "
                     + "callingLineIdPhoneNumber, locationDialingCode and each contact/address field) pass an "
                     + "empty string to clear the current value. groupName, defaultDomain, timeZone and userLimit "

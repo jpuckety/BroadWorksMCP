@@ -1,9 +1,8 @@
-import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -14,7 +13,24 @@ import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
-import { DockerImageAsset, Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import * as codedeploy from 'aws-cdk-lib/aws-codedeploy';
+
+/** Application container name; must match Dockerfile, appspec.yaml, and CodeDeploy. */
+export const APP_CONTAINER_NAME = 'broadworks-mcp';
+/** Application container port; must match Dockerfile EXPOSE and appspec.yaml. */
+export const APP_CONTAINER_PORT = 8080;
+/** ALB / Docker health check path. */
+export const APP_HEALTH_CHECK_PATH = '/actuator/health';
+export const TASK_FAMILY = 'broadworks-mcp';
+export const ECR_REPOSITORY_NAME = 'broadworks-mcp';
+export const ECS_CLUSTER_NAME = 'broadworks-mcp';
+export const ECS_SERVICE_NAME = 'broadworks-mcp';
+export const CODEDEPLOY_APPLICATION_NAME = 'broadworks-mcp';
+export const CODEDEPLOY_DEPLOYMENT_GROUP_NAME = 'broadworks-mcp';
+export const ECR_PUSH_ROLE_NAME = 'BroadWorksMcpEcrPushRole';
+export const PIPELINE_DEPLOY_ROLE_NAME = 'BroadWorksMcpPipelineDeployRole';
+/** Public image used until CodeDeploy rolls the real digest. Must provide `sh`/`chown` for volume-init. */
+export const PLACEHOLDER_IMAGE = 'public.ecr.aws/amazonlinux/amazonlinux:2023';
 
 export interface BroadWorksMcpStackProps extends cdk.StackProps {
   /**
@@ -48,14 +64,29 @@ export interface BroadWorksMcpStackProps extends cdk.StackProps {
    * `allowInsecureHttp` CDK context value.
    */
   readonly allowInsecureHttp?: boolean;
+  /**
+   * Pipeline AWS account that may assume {@link ECR_PUSH_ROLE_NAME} and {@link PIPELINE_DEPLOY_ROLE_NAME}.
+   * Optional so the stack stays independently deployable for bootstrap / break-glass.
+   */
+  readonly pipelineAccount?: string;
+  /**
+   * Initial task-definition image URI. Defaults to {@link PLACEHOLDER_IMAGE}. CodeDeploy owns later
+   * image rollouts; do not pass the live service image here after the first create.
+   */
+  readonly imageUri?: string;
 }
 
 /**
- * Deploys broadworks-mcp on ECS Fargate behind an (HTTPS) Application Load Balancer, with two
- * DynamoDB tables encrypted by a customer-managed KMS key, a task IAM role granting scoped
- * KMS + DynamoDB access (the blueprint's "IRSA" role), and SSM SecureString-backed secrets.
+ * Deploys broadworks-mcp on ECS Fargate behind an (HTTPS) Application Load Balancer with CodeDeploy
+ * blue/green, an ECR repository, two DynamoDB tables encrypted by a customer-managed KMS key, a
+ * task IAM role granting scoped KMS + DynamoDB access, and SSM SecureString-backed secrets.
  */
 export class BroadWorksMcpStack extends cdk.Stack {
+  public readonly repository: ecr.Repository;
+  public readonly cluster: ecs.Cluster;
+  public readonly service: ecs.FargateService;
+  public readonly loadBalancer: elbv2.ApplicationLoadBalancer;
+
   constructor(scope: Construct, id: string, props: BroadWorksMcpStackProps = {}) {
     super(scope, id, props);
 
@@ -64,20 +95,18 @@ export class BroadWorksMcpStack extends cdk.Stack {
       this.node.tryGetContext('oauthRedirectAllowlist') ?? process.env.OAUTH_REDIRECT_ALLOWLIST ?? '';
     const ssmNames = this.node.tryGetContext('ssm') ?? {};
 
-    // Public hostname drives both the app's base URL (https://<hostname>) and the ACM certificate.
     const hostname: string | undefined = props.hostname ?? this.node.tryGetContext('hostname');
+    const pipelineAccount: string | undefined =
+      props.pipelineAccount ?? this.node.tryGetContext('pipelineAccount') ?? process.env.PIPELINE_ACCOUNT;
+    const imageUri: string =
+      props.imageUri ?? this.node.tryGetContext('imageUri') ?? process.env.IMAGE_URI ?? PLACEHOLDER_IMAGE;
 
-    // Route 53 hosted zone that owns the hostname; used to create the DNS alias record and to
-    // DNS-validate the certificate. When not given explicitly, derive it from the hostname by
-    // dropping the leftmost label (mcp.example.com -> example.com).
     const hostedZoneId: string | undefined = props.hostedZoneId ?? this.node.tryGetContext('hostedZoneId');
     const hostedZoneName: string | undefined =
       props.hostedZoneName ??
       this.node.tryGetContext('hostedZoneName') ??
       (hostname && hostname.includes('.') ? hostname.substring(hostname.indexOf('.') + 1) : undefined);
 
-    // Resolve the hosted zone up front so it can drive both certificate validation and the alias
-    // record. If an id + name pair is supplied, reference it directly; otherwise look it up.
     let hostedZone: route53.IHostedZone | undefined;
     if (hostname && hostedZoneName) {
       hostedZone =
@@ -98,15 +127,13 @@ export class BroadWorksMcpStack extends cdk.Stack {
       tags: [{ key: 'Name', value: 'broadworks-mcp-nat' }],
     });
 
-    // Provision the VPC's NAT gateway with the fixed Elastic IP above (one EIP per NAT gateway).
     const natGatewayProvider = ec2.NatProvider.gateway({
       eipAllocationIds: [natEip.attrAllocationId],
     });
 
     // Two-tier subnet layout: public subnets host the NAT gateway (and the internet-facing ALB),
     // while the ECS Fargate tasks live in private subnets whose only route to the internet is
-    // through the NAT gateway. This keeps the tasks unreachable from the public internet while
-    // still allowing outbound traffic via the fixed Elastic IP.
+    // through the NAT gateway.
     const vpc = new ec2.Vpc(this, 'Vpc', {
       maxAzs: 2,
       natGateways: 1,
@@ -151,9 +178,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
     });
 
     // Interactive Google-login HTTP sessions (Spring Session). Deliberately a separate table from
-    // the OAuth sessions/clients/authorizations above: different lifecycle (minutes, rotated on
-    // login), different id space (servlet session ids) and an opaque serialized attribute blob, so
-    // the two schemas cannot drift into each other. No GSI is needed - lookups are by session id.
+    // the OAuth sessions/clients/authorizations above.
     const httpSessionsTable = new dynamodb.Table(this, 'HttpSessionsTable', {
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -195,28 +220,27 @@ export class BroadWorksMcpStack extends cdk.Stack {
       parameterName: ssmNames.alpacaLicenseKey ?? '/broadworks-mcp/alpaca-license-key',
     });
 
-    // Live BroadWorks OCI login is the app default (true). Override via context `alpacaLive` or
-    // env ALPACA_LIVE when synthesizing only if you need to force it off in a deployment.
-    const alpacaLive: string =
-      this.node.tryGetContext('alpacaLive') ?? process.env.ALPACA_LIVE ?? 'true';
+    const alpacaLive: string = this.node.tryGetContext('alpacaLive') ?? process.env.ALPACA_LIVE ?? 'true';
 
-    // ---- Container image (built from the repo root Dockerfile) ------------
-    // Pin the build platform to linux/amd64 so the asset is built for the same
-    // architecture the Fargate task runs on (see runtimePlatform below). Without
-    // this, building on an arm64 host (e.g. Apple Silicon) produces an arm64
-    // image that Fargate's default X86_64 runtime cannot execute, failing at
-    // startup with "exec /usr/bin/sh: exec format error".
-    // The asset is created explicitly (rather than via ContainerImage.fromAsset) so the app
-    // container and the volume-init container below share a single build/publish of the image.
-    const imageAsset = new DockerImageAsset(this, 'ImageAsset', {
-      directory: path.join(__dirname, '..', '..'),
-      file: 'Dockerfile',
-      platform: Platform.LINUX_AMD64,
+    // ---- ECR (pipeline builds/pushes; CDK does not bake DockerImageAsset) --
+    this.repository = new ecr.Repository(this, 'Repository', {
+      repositoryName: ECR_REPOSITORY_NAME,
+      imageScanOnPush: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
-    const image = ecs.ContainerImage.fromDockerImageAsset(imageAsset);
 
-    // Let CloudWatch Logs use the customer-managed key for the log group below. The encryption
-    // context condition scopes the grant to log groups in this account/region.
+    const executionRole = new iam.Role(this, 'ExecutionRole', {
+      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+      description: 'broadworks-mcp execution role: logs, SSM secrets, this account ECR only',
+    });
+    this.repository.grantPull(executionRole);
+    executionRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ['ecr:GetAuthorizationToken'],
+        resources: ['*'],
+      }),
+    );
+
     dataKey.addToResourcePolicy(
       new iam.PolicyStatement({
         sid: 'AllowCloudWatchLogs',
@@ -242,26 +266,23 @@ export class BroadWorksMcpStack extends cdk.Stack {
       encryptionKey: dataKey,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+    logGroup.grantWrite(executionRole);
 
-    const cluster = new ecs.Cluster(this, 'Cluster', {
+    this.cluster = new ecs.Cluster(this, 'Cluster', {
       vpc,
+      clusterName: ECS_CLUSTER_NAME,
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
     });
 
-    // TLS is mandatory. Plain HTTP is only possible behind an explicit development opt-out.
     const allowInsecureHttp: boolean =
       props.allowInsecureHttp ?? String(this.node.tryGetContext('allowInsecureHttp') ?? 'false') === 'true';
 
-    // Prefer an explicitly provided certificate ARN; otherwise create a certificate from the
-    // hostname (DNS-validated).
     let certificate: acm.ICertificate | undefined;
     if (props.certificateArn) {
       certificate = acm.Certificate.fromCertificateArn(this, 'Certificate', props.certificateArn);
     } else if (hostname) {
       certificate = new acm.Certificate(this, 'Certificate', {
         domainName: hostname,
-        // When the hosted zone is known, CDK writes the DNS validation records automatically;
-        // otherwise the validation CNAMEs must be added to DNS manually.
         validation: hostedZone
           ? acm.CertificateValidation.fromDns(hostedZone)
           : acm.CertificateValidation.fromDns(),
@@ -274,93 +295,122 @@ export class BroadWorksMcpStack extends cdk.Stack {
       );
     }
 
-    // ---- Fargate service behind an ALB ------------------------------------
-    const service = new ecsPatterns.ApplicationLoadBalancedFargateService(this, 'Service', {
-      cluster,
+    const healthCheck: elbv2.HealthCheck = {
+      path: APP_HEALTH_CHECK_PATH,
+      healthyHttpCodes: '200',
+      interval: cdk.Duration.seconds(30),
+    };
+
+    this.loadBalancer = new elbv2.ApplicationLoadBalancer(this, 'Alb', {
+      vpc,
+      internetFacing: true,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+    });
+
+    const blueTargetGroup = new elbv2.ApplicationTargetGroup(this, 'BlueTargetGroup', {
+      vpc,
+      port: APP_CONTAINER_PORT,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck,
+      deregistrationDelay: cdk.Duration.seconds(30),
+    });
+    const greenTargetGroup = new elbv2.ApplicationTargetGroup(this, 'GreenTargetGroup', {
+      vpc,
+      port: APP_CONTAINER_PORT,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck,
+      deregistrationDelay: cdk.Duration.seconds(30),
+    });
+
+    let productionListener: elbv2.ApplicationListener;
+    if (certificate) {
+      this.loadBalancer.addListener('HttpListener', {
+        port: 80,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        defaultAction: elbv2.ListenerAction.redirect({
+          port: '443',
+          protocol: 'HTTPS',
+          permanent: true,
+        }),
+      });
+      productionListener = this.loadBalancer.addListener('HttpsListener', {
+        port: 443,
+        protocol: elbv2.ApplicationProtocol.HTTPS,
+        certificates: [certificate],
+        defaultAction: elbv2.ListenerAction.forward([blueTargetGroup]),
+      });
+    } else {
+      productionListener = this.loadBalancer.addListener('HttpListener', {
+        port: 80,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        defaultAction: elbv2.ListenerAction.forward([blueTargetGroup]),
+      });
+    }
+
+    const image = ecs.ContainerImage.fromRegistry(imageUri);
+
+    const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDef', {
+      family: TASK_FAMILY,
       cpu: 512,
       memoryLimitMiB: 1024,
-      desiredCount: 2,
-      // ECS Exec: `aws ecs execute-command` into a running task. The tasks have no public IP and sit
-      // in private subnets, so this is the only way to observe the container's own view of the
-      // network - notably DNS. It is what makes a failure such as
-      // "java.net.UnknownHostException: portal.vwave.net: Temporary failure in name resolution"
-      // diagnosable: from inside the task `getent hosts <broadworks-host>` distinguishes an
-      // unresolvable name from a resolver that never answers, and `cat /etc/resolv.conf` shows which
-      // nameserver (normally the Amazon-provided resolver) is being asked. CDK adds the required
-      // ssmmessages:* permissions to the task role; the SSM channel is reached outbound through the
-      // NAT gateway. See also the writable agent mounts further down (read-only root filesystem).
-      enableExecuteCommand: true,
-      // Run on X86_64/Linux to match the amd64 image built above.
+      taskRole,
+      executionRole,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
-      publicLoadBalancer: true,
-      // Run the tasks in the private subnets with no public IP so their only outbound path is
-      // through the NAT gateway (and its fixed Elastic IP). The public ALB still reaches them via
-      // the VPC-internal target group.
-      taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      assignPublicIp: false,
-      protocol: certificate ? elbv2.ApplicationProtocol.HTTPS : elbv2.ApplicationProtocol.HTTP,
-      certificate,
-      // With HTTPS, also open :80 purely to 301-redirect clients to :443.
-      redirectHTTP: certificate !== undefined,
-      taskImageOptions: {
-        image,
-        containerName: 'broadworks-mcp',
-        containerPort: 8080,
-        taskRole,
-        enableLogging: true,
-        logDriver: ecs.LogDrivers.awsLogs({ streamPrefix: 'broadworks-mcp', logGroup }),
-        environment: {
-          STORAGE_BACKEND: 'DYNAMODB',
-          SESSION_TABLE: sessionsTable.tableName,
-          HTTP_SESSION_TABLE: httpSessionsTable.tableName,
-          USER_CONFIG_TABLE: userConfigTable.tableName,
-          APPLICATION_ID: applicationId,
-          KMS_KEY_ID: dataKey.keyId,
-          AWS_REGION: this.region,
-          OAUTH_REDIRECT_ALLOWLIST: oauthRedirectAllowlist,
-          PUBLIC_HOSTNAME: hostname ?? '',
-          // Explicit live flag (app default is already true; false only for unusual deploys).
-          ALPACA_LIVE: alpacaLive,
-        },
-        secrets: {
-          GOOGLE_CLIENT_ID: ecs.Secret.fromSsmParameter(googleClientId),
-          GOOGLE_CLIENT_SECRET: ecs.Secret.fromSsmParameter(googleClientSecret),
-          ALPACA_LICENSE_KEY: ecs.Secret.fromSsmParameter(alpacaLicenseKey),
-        },
+    });
+
+    const appLogDriver = ecs.LogDrivers.awsLogs({ streamPrefix: 'broadworks-mcp', logGroup });
+    const appContainer = taskDefinition.addContainer('App', {
+      containerName: APP_CONTAINER_NAME,
+      image,
+      portMappings: [{ containerPort: APP_CONTAINER_PORT }],
+      logging: appLogDriver,
+      essential: true,
+      environment: {
+        STORAGE_BACKEND: 'DYNAMODB',
+        SESSION_TABLE: sessionsTable.tableName,
+        HTTP_SESSION_TABLE: httpSessionsTable.tableName,
+        USER_CONFIG_TABLE: userConfigTable.tableName,
+        APPLICATION_ID: applicationId,
+        KMS_KEY_ID: dataKey.keyId,
+        AWS_REGION: this.region,
+        OAUTH_REDIRECT_ALLOWLIST: oauthRedirectAllowlist,
+        PUBLIC_HOSTNAME: hostname ?? '',
+        ALPACA_LIVE: alpacaLive,
+      },
+      secrets: {
+        GOOGLE_CLIENT_ID: ecs.Secret.fromSsmParameter(googleClientId),
+        GOOGLE_CLIENT_SECRET: ecs.Secret.fromSsmParameter(googleClientSecret),
+        ALPACA_LICENSE_KEY: ecs.Secret.fromSsmParameter(alpacaLicenseKey),
       },
     });
 
-    // ---- Container hardening ----------------------------------- JCS disk cache (cache.ccf DiskPath=.cache/jcs) and /tmp the JVM's
-    // temp/hsperfdata files (Tomcat's tempDir, hsperfdata, ...).
-    const taskDefinition = service.taskDefinition;
     taskDefinition.addVolume({ name: 'app-cache' });
     taskDefinition.addVolume({ name: 'tmp' });
     // ECS Exec support: the agent ECS injects into the container writes its state and logs under
     // /var/lib/amazon and /var/log/amazon. With the immutable root filesystem below those writes
-    // fail and every `execute-command` session dies immediately ("Failed to start pty" / the task
-    // reports ExecuteCommandAgent as STOPPED), so both directories get their own ephemeral volume.
+    // fail and every `execute-command` session dies immediately, so both directories get their own
+    // ephemeral volume.
     taskDefinition.addVolume({ name: 'ssm-agent-state' });
     taskDefinition.addVolume({ name: 'ssm-agent-logs' });
-    taskDefinition.defaultContainer!.addMountPoints(
+    appContainer.addMountPoints(
       { sourceVolume: 'app-cache', containerPath: '/app/.cache', readOnly: false },
       { sourceVolume: 'tmp', containerPath: '/tmp', readOnly: false },
       { sourceVolume: 'ssm-agent-state', containerPath: '/var/lib/amazon', readOnly: false },
       { sourceVolume: 'ssm-agent-logs', containerPath: '/var/log/amazon', readOnly: false },
     );
 
-    // Fargate creates the ephemeral volumes above empty and owned by root:root 0755 — the image's
-    // ownership/permissions for /tmp and /app/.cache are NOT carried over into the mount. Since the
-    // app container runs as the unprivileged uid 10001 (see Dockerfile), the JVM would fail at
-    // startup with "Unable to create tempDir. java.io.tmpdir is set to /tmp". A short-lived root
-    // init container therefore fixes up ownership/permissions on both mounts before the app starts.
+    // Fargate creates the ephemeral volumes above empty and owned by root:root 0755. A short-lived
+    // root init container fixes up ownership/permissions before the app starts. CodeDeploy replaces
+    // only the app container image, so this sidecar stays on the placeholder (which must have sh).
     const volumeInit = taskDefinition.addContainer('VolumeInit', {
       image,
       containerName: 'volume-init',
       user: 'root',
-      // Not part of the serving workload: the task must not be considered unhealthy when it exits.
       essential: false,
       memoryReservationMiB: 64,
       entryPoint: ['sh', '-c'],
@@ -370,8 +420,6 @@ export class BroadWorksMcpStack extends cdk.Stack {
           'chown -R 10001:10001 /app/.cache; ' +
           'chown 10001:10001 /tmp; ' +
           'chmod 1777 /tmp; ' +
-          // The ECS Exec agent writes under these two mounts as the app container's user (uid 10001),
-          // so they need the same ownership fix-up as the mounts above.
           'mkdir -p /var/lib/amazon/ssm /var/log/amazon/ssm; ' +
           'chown -R 10001:10001 /var/lib/amazon /var/log/amazon',
       ],
@@ -383,20 +431,53 @@ export class BroadWorksMcpStack extends cdk.Stack {
       { sourceVolume: 'ssm-agent-state', containerPath: '/var/lib/amazon', readOnly: false },
       { sourceVolume: 'ssm-agent-logs', containerPath: '/var/log/amazon', readOnly: false },
     );
-    // Hold the app container back until the fix-up has completed successfully.
-    taskDefinition.defaultContainer!.addContainerDependencies({
+    appContainer.addContainerDependencies({
       container: volumeInit,
       condition: ecs.ContainerDependencyCondition.SUCCESS,
     });
 
-    // ReadonlyRootFilesystem is not exposed by the L2 container definition props, so it is applied
-    // through an escape hatch. Both containers only ever write to the mounted volumes above, hence
-    // every container definition (index 0 = the app, index 1 = volume-init, in creation order) gets
-    // an immutable root filesystem.
     const cfnTaskDefinition = taskDefinition.node.defaultChild as ecs.CfnTaskDefinition;
     for (const index of [0, 1]) {
       cfnTaskDefinition.addPropertyOverride(`ContainerDefinitions.${index}.ReadonlyRootFilesystem`, true);
     }
+
+    this.service = new ecs.FargateService(this, 'Service', {
+      cluster: this.cluster,
+      serviceName: ECS_SERVICE_NAME,
+      taskDefinition,
+      desiredCount: 2,
+      minHealthyPercent: 0,
+      maxHealthyPercent: 200,
+      assignPublicIp: false,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      enableExecuteCommand: true,
+      healthCheckGracePeriod: cdk.Duration.seconds(120),
+      deploymentController: { type: ecs.DeploymentControllerType.CODE_DEPLOY },
+    });
+    this.service.attachToApplicationTargetGroup(blueTargetGroup);
+    this.service.connections.allowFrom(this.loadBalancer, ec2.Port.tcp(APP_CONTAINER_PORT));
+
+    // Pin TaskDefinition to the family name (no revision). CloudFormation `Ref` on a task definition
+    // includes the revision, so a later CDK change would try to update Service.TaskDefinition and
+    // fail under CODE_DEPLOY. The family string is stable; CodeDeploy owns image rollouts.
+    const cfnService = this.service.node.defaultChild as ecs.CfnService;
+    cfnService.taskDefinition = TASK_FAMILY;
+
+    const application = new codedeploy.EcsApplication(this, 'CodeDeployApplication', {
+      applicationName: CODEDEPLOY_APPLICATION_NAME,
+    });
+    new codedeploy.EcsDeploymentGroup(this, 'DeploymentGroup', {
+      application,
+      deploymentGroupName: CODEDEPLOY_DEPLOYMENT_GROUP_NAME,
+      service: this.service,
+      blueGreenDeploymentConfig: {
+        blueTargetGroup,
+        greenTargetGroup,
+        listener: productionListener,
+      },
+      autoRollback: { failedDeployment: true },
+      deploymentConfig: codedeploy.EcsDeploymentConfig.ALL_AT_ONCE,
+    });
 
     // ---- WAF (internet-facing ALB) ----------------------------------------
     // The two AWS managed rule groups below (CommonRuleSet + KnownBadInputs) inspect the request
@@ -501,7 +582,6 @@ export class BroadWorksMcpStack extends cdk.Stack {
           },
         },
         {
-          // Dynamic Client Registration is unauthenticated: 100 requests / 5 min / IP.
           name: 'RateLimitOauthRegister',
           priority: 2,
           action: { block: {} },
@@ -527,7 +607,6 @@ export class BroadWorksMcpStack extends cdk.Stack {
           },
         },
         {
-          // Token endpoint (code exchange + refresh): 100 requests / 5 min / IP.
           name: 'RateLimitOauthToken',
           priority: 3,
           action: { block: {} },
@@ -573,18 +652,10 @@ export class BroadWorksMcpStack extends cdk.Stack {
     });
 
     new wafv2.CfnWebACLAssociation(this, 'WebAclAssociation', {
-      resourceArn: service.loadBalancer.loadBalancerArn,
+      resourceArn: this.loadBalancer.loadBalancerArn,
       webAclArn: webAcl.attrArn,
     });
 
-    // WAF blocks are invisible to the application (the 403 is served by WAF itself), which is why the
-    // loopback redirect-URI breakage above could only be found by probing the live endpoint and why
-    // the offending managed rule still cannot be named. Ship the WebACL logs to CloudWatch so a future
-    // block identifies its rule and the scope-down above can be replaced by a precise
-    // `ruleActionOverrides`. WAF requires the destination log group name to start with
-    // `aws-waf-logs-`. The customer-managed key is reused: the `AllowCloudWatchLogs` statement on
-    // `dataKey` already lets the CloudWatch Logs service encrypt log groups in this account/region,
-    // and WAF delivers through that service.
     const wafLogGroupName = 'aws-waf-logs-broadworks-mcp';
     const wafLogGroup = new logs.LogGroup(this, 'WafLogGroup', {
       logGroupName: wafLogGroupName,
@@ -595,8 +666,6 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     const wafLoggingConfiguration = new wafv2.CfnLoggingConfiguration(this, 'WebAclLoggingConfiguration', {
       resourceArn: webAcl.attrArn,
-      // WAF rejects the `:*` suffix that `logGroup.logGroupArn` carries, so the destination ARN is
-      // built explicitly from the (literal) log group name.
       logDestinationConfigs: [
         this.formatArn({
           service: 'logs',
@@ -605,40 +674,17 @@ export class BroadWorksMcpStack extends cdk.Stack {
           arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME,
         }),
       ],
-      // Bearer tokens and session cookies must never land in the logs.
       redactedFields: [
         { singleHeader: { Name: 'authorization' } },
         { singleHeader: { Name: 'cookie' } },
       ],
     });
-    // The destination ARN is a literal string, so CloudFormation cannot infer the ordering itself.
     wafLoggingConfiguration.node.addDependency(wafLogGroup);
 
-    // Actuator health probe for ALB target group.
-    service.targetGroup.configureHealthCheck({
-      path: '/actuator/health',
-      healthyHttpCodes: '200',
-      interval: cdk.Duration.seconds(30),
-    });
+    // No ALB session stickiness is required. Multi-instance OAuth is durable in DynamoDB.
 
-    // No ALB session stickiness is required. Multi-instance OAuth is durable in DynamoDB:
-    // - Interactive Google sign-in HTTP sessions (SecurityContext / saved request) via Spring Session
-    //   (HttpSessionConfig / DynamoDbHttpSessionRepository) in the dedicated http-sessions table.
-    // - SAS authorizations (auth codes, refresh grants) and consents via DynamoDbAuthorizationStore
-    //   in the same sessions table (oauth# / oauthtok# / oauthconsent# prefixes).
-    // - Issued opaque access-token sessions via DynamoDbSessionStore (including token rotation).
-    // Any of the `desiredCount` tasks can therefore serve any step of the
-    // `/oauth2/authorization/google` -> `/login/oauth2/code/google` -> `/oauth2/authorize` ->
-    // `/oauth2/token` handshake. (Cookie stickiness would not work for native MCP clients, which
-    // do not honor the ALB cookie.)
-
-    // ---- DNS records ------------------------------------------------------
-    // Point the public hostname at the ALB via Route 53 alias records (IPv4 + IPv6). Requires a
-    // resolvable hosted zone; without one the hostname must be wired to the ALB DNS name manually.
     if (hostname && hostedZone) {
-      const albAliasTarget = route53.RecordTarget.fromAlias(
-        new route53Targets.LoadBalancerTarget(service.loadBalancer),
-      );
+      const albAliasTarget = route53.RecordTarget.fromAlias(new route53Targets.LoadBalancerTarget(this.loadBalancer));
       new route53.ARecord(this, 'AliasRecord', {
         zone: hostedZone,
         recordName: hostname,
@@ -653,15 +699,112 @@ export class BroadWorksMcpStack extends cdk.Stack {
       });
     }
 
-    // ---- Grants (least privilege) -----------------------------------------
     sessionsTable.grantReadWriteData(taskRole);
     httpSessionsTable.grantReadWriteData(taskRole);
     userConfigTable.grantReadWriteData(taskRole);
     dataKey.grantEncryptDecrypt(taskRole);
 
-    // ---- Outputs ----------------------------------------------------------
+    if (pipelineAccount) {
+      const pipelinePrincipal = new iam.AccountPrincipal(pipelineAccount);
+
+      const ecrPushRole = new iam.Role(this, 'EcrPushRole', {
+        roleName: ECR_PUSH_ROLE_NAME,
+        assumedBy: pipelinePrincipal,
+        description: 'Assumed by the MCPCICD pipeline to push/pull this account ECR and read the live task definition',
+      });
+      this.repository.grantPullPush(ecrPushRole);
+      ecrPushRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['ecr:GetAuthorizationToken'],
+          resources: ['*'],
+        }),
+      );
+      ecrPushRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['ecs:DescribeTaskDefinition', 'ecs:DescribeServices', 'ecs:DescribeClusters'],
+          resources: ['*'],
+        }),
+      );
+
+      const pipelineDeployRole = new iam.Role(this, 'PipelineDeployRole', {
+        roleName: PIPELINE_DEPLOY_ROLE_NAME,
+        assumedBy: pipelinePrincipal,
+        description: 'Assumed by CodePipeline for CodeDeploy To ECS in this account',
+      });
+      pipelineDeployRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: [
+            'codedeploy:CreateDeployment',
+            'codedeploy:GetDeployment',
+            'codedeploy:GetDeploymentConfig',
+            'codedeploy:GetApplication',
+            'codedeploy:GetApplicationRevision',
+            'codedeploy:RegisterApplicationRevision',
+            'codedeploy:GetDeploymentGroup',
+          ],
+          resources: ['*'],
+        }),
+      );
+      pipelineDeployRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['ecs:RegisterTaskDefinition', 'ecs:DescribeTaskDefinition', 'ecs:DescribeServices', 'ecs:DescribeClusters'],
+          resources: ['*'],
+        }),
+      );
+      pipelineDeployRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          actions: ['iam:PassRole'],
+          resources: [taskRole.roleArn, executionRole.roleArn],
+          conditions: {
+            StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' },
+          },
+        }),
+      );
+      pipelineDeployRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          sid: 'PipelineArtifacts',
+          actions: ['s3:GetObject', 's3:GetObjectVersion'],
+          resources: ['*'],
+          conditions: {
+            StringEquals: { 'aws:ResourceAccount': pipelineAccount },
+          },
+        }),
+      );
+      pipelineDeployRole.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          sid: 'PipelineKms',
+          actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GenerateDataKey'],
+          resources: ['*'],
+          conditions: {
+            StringEquals: { 'aws:ResourceAccount': pipelineAccount },
+          },
+        }),
+      );
+
+      new ssm.StringParameter(this, 'EcrUriParameter', {
+        parameterName: '/broadworks-mcp/pipeline/ecr-uri',
+        stringValue: this.repository.repositoryUri,
+      });
+      new ssm.StringParameter(this, 'EcrPushRoleArnParameter', {
+        parameterName: '/broadworks-mcp/pipeline/ecr-push-role-arn',
+        stringValue: ecrPushRole.roleArn,
+      });
+      new ssm.StringParameter(this, 'PipelineDeployRoleArnParameter', {
+        parameterName: '/broadworks-mcp/pipeline/pipeline-deploy-role-arn',
+        stringValue: pipelineDeployRole.roleArn,
+      });
+
+      new cdk.CfnOutput(this, 'EcrPushRoleArn', { value: ecrPushRole.roleArn });
+      new cdk.CfnOutput(this, 'PipelineDeployRoleArn', { value: pipelineDeployRole.roleArn });
+    } else {
+      cdk.Annotations.of(this).addWarning(
+        'pipelineAccount is not set: EcrPushRole and PipelineDeployRole were not created. Pass ' +
+          '-c pipelineAccount=<pipeline-aws-account-id> so MCPCICD can assume into this environment.',
+      );
+    }
+
     new cdk.CfnOutput(this, 'LoadBalancerDns', {
-      value: service.loadBalancer.loadBalancerDnsName,
+      value: this.loadBalancer.loadBalancerDnsName,
       description: 'Public DNS name of the MCP load balancer',
     });
     if (hostname && hostedZone) {
@@ -678,6 +821,11 @@ export class BroadWorksMcpStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'HttpSessionsTableName', { value: httpSessionsTable.tableName });
     new cdk.CfnOutput(this, 'UserConfigTableName', { value: userConfigTable.tableName });
     new cdk.CfnOutput(this, 'KmsKeyId', { value: dataKey.keyId });
+    new cdk.CfnOutput(this, 'EcrRepositoryUri', { value: this.repository.repositoryUri });
+    new cdk.CfnOutput(this, 'ClusterName', { value: this.cluster.clusterName });
+    new cdk.CfnOutput(this, 'ServiceName', { value: this.service.serviceName });
+    new cdk.CfnOutput(this, 'CodeDeployApplicationName', { value: CODEDEPLOY_APPLICATION_NAME });
+    new cdk.CfnOutput(this, 'CodeDeployDeploymentGroupName', { value: CODEDEPLOY_DEPLOYMENT_GROUP_NAME });
 
     if (!certificate) {
       cdk.Annotations.of(this).addWarning(

@@ -3,5 +3,6 @@ cdk.out/
 *.js
 *.d.ts
 !jest.config.js
+!scripts/*.js
 *.js.map
 .cdk.staging/

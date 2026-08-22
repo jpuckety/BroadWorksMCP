@@ -32,4 +32,11 @@ new BroadWorksMcpStack(app, 'BroadWorksMcpStack', {
   // or the HOSTED_ZONE_NAME / HOSTED_ZONE_ID environment variables.
   hostedZoneName: app.node.tryGetContext('hostedZoneName') ?? process.env.HOSTED_ZONE_NAME,
   hostedZoneId: app.node.tryGetContext('hostedZoneId') ?? process.env.HOSTED_ZONE_ID,
+  // Pipeline account that may assume EcrPushRole / PipelineDeployRole. Provide via:
+  //   cdk deploy -c pipelineAccount=111111111111
+  // or PIPELINE_ACCOUNT. Optional for break-glass laptop deploys.
+  pipelineAccount: app.node.tryGetContext('pipelineAccount') ?? process.env.PIPELINE_ACCOUNT,
+  // Optional initial task-definition image. Defaults to a public placeholder; CodeDeploy owns
+  // later image rollouts. Provide via -c imageUri=... or IMAGE_URI.
+  imageUri: app.node.tryGetContext('imageUri') ?? process.env.IMAGE_URI,
 });

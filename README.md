@@ -363,11 +363,34 @@ Each tool resolves the caller's BroadWorks connection from the resource store (b
 
 ## Deployment (AWS CDK)
 
-The `cdk/` app provisions ECS Fargate behind an HTTPS ALB, the three DynamoDB tables (sessions with
-the `refresh-index` GSI + http-sessions + user-config) encrypted by a customer-managed KMS key, a
-Fargate **task IAM
-role** granting scoped KMS + DynamoDB access (the blueprint's "IRSA" role), CloudWatch logs, and SSM
-SecureString-backed secrets injected as container env.
+The `cdk/` app provisions ECS Fargate behind an HTTPS ALB with **CodeDeploy blue/green** (two target
+groups, `CODE_DEPLOY` controller), an ECR repository (`broadworks-mcp`), the three DynamoDB tables
+(sessions with the `refresh-index` GSI + http-sessions + user-config) encrypted by a customer-managed
+KMS key, a Fargate **task IAM role** granting scoped KMS + DynamoDB access (the blueprint's "IRSA"
+role), CloudWatch logs, and SSM SecureString-backed secrets injected as container env.
+
+Image rollouts are owned by **CodeDeploy**, not by `cdk deploy`. The stack no longer builds a
+`DockerImageAsset` on a laptop: the initial task definition uses a public placeholder image (or
+`-c imageUri=...`). The [MCPCICD](https://github.com/jpuckety/MCPCICD) pipeline builds the repo-root
+`Dockerfile` once, pushes to Dev ECR, blue/green deploys, then after approval promotes the **same
+digest** to Prod.
+
+Stable names used by the pipeline (`cdk/scripts/prepare-taskdef.js` writes `taskdef.json` from the
+live family and `appspec.yaml`):
+
+| Resource | Name |
+|---|---|
+| ECR repository / ECS cluster / service / task family / CodeDeploy app+group / container | `broadworks-mcp` |
+| Container port | `8080` |
+| Health check | `/actuator/health` |
+| Cross-account roles (trust `-c pipelineAccount=...`) | `BroadWorksMcpEcrPushRole`, `BroadWorksMcpPipelineDeployRole` |
+
+PRs run GitHub Actions only (`mvn -Pinstall-alpaca verify` and `docker build`) — no AWS deploy.
+Merges to `master` are released by MCPCICD.
+
+**Existing rolling (`ApplicationLoadBalancedFargateService`) stacks cannot be converted in place.**
+Destroy and recreate (or replace the service logical ID) if Dev/Prod already run the previous ALB
+pattern.
 
 1. Create the SSM SecureString parameters:
 
@@ -387,15 +410,21 @@ SecureString-backed secrets injected as container env.
 
    Set `AWS_REGION` (e.g. in `.env`) to target a specific region.
 
-2. Deploy with the public hostname (build the image from the repo-root `Dockerfile` as a CDK
-   asset). The hostname builds the server base URL (`https://<hostname>`) **and** provisions the
-   ACM certificate for the HTTPS ALB listener:
+2. Deploy infrastructure with the public hostname (placeholder image; CodeDeploy / MCPCICD ships
+   the real digest). The hostname builds the server base URL (`https://<hostname>`) **and**
+   provisions the ACM certificate for the HTTPS ALB listener. Pass the pipeline account so
+   cross-account push/deploy roles are created:
 
    ```bash
    cd cdk
    npm install
-   npx cdk deploy -c hostname=mcp.example.com
+   npx cdk deploy -c hostname=mcp.example.com -c pipelineAccount=111111111111
    ```
+
+   This path is for **bootstrap and break-glass**. Day-to-day releases go through MCPCICD
+   (`cdk deploy` of `BroadWorksMcpStack` per env, then CodeDeploy). SSM parameters above must
+   exist in **each** env account before the first `cdk deploy` of that account. Dev/Prod CDK
+   bootstrap must `--trust` the pipeline account so pipeline CodeBuild can assume bootstrap roles.
 
    The certificate is DNS-validated: after `deploy` starts, add the CNAME record ACM shows in the
    console (or point `hostname` at a Route 53 zone in this account) so validation can complete.
