@@ -82,7 +82,7 @@ export interface BroadWorksMcpStackProps extends cdk.StackProps {
  * task IAM role granting scoped KMS + DynamoDB access, and SSM SecureString-backed secrets.
  */
 export class BroadWorksMcpStack extends cdk.Stack {
-  public readonly repository: ecr.Repository;
+  public readonly repository: ecr.IRepository;
   public readonly cluster: ecs.Cluster;
   public readonly service: ecs.FargateService;
   public readonly loadBalancer: elbv2.ApplicationLoadBalancer;
@@ -109,13 +109,12 @@ export class BroadWorksMcpStack extends cdk.Stack {
 
     let hostedZone: route53.IHostedZone | undefined;
     if (hostname && hostedZoneName) {
-      hostedZone =
-        hostedZoneId !== undefined
-          ? route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
-              hostedZoneId,
-              zoneName: hostedZoneName,
-            })
-          : route53.HostedZone.fromLookup(this, 'HostedZone', { domainName: hostedZoneName });
+      hostedZone = hostedZoneId
+        ? route53.HostedZone.fromHostedZoneAttributes(this, 'HostedZone', {
+            hostedZoneId,
+            zoneName: hostedZoneName,
+          })
+        : route53.HostedZone.fromLookup(this, 'HostedZone', { domainName: hostedZoneName });
     }
 
     // ---- Networking -------------------------------------------------------
@@ -223,11 +222,8 @@ export class BroadWorksMcpStack extends cdk.Stack {
     const alpacaLive: string = this.node.tryGetContext('alpacaLive') ?? process.env.ALPACA_LIVE ?? 'true';
 
     // ---- ECR (pipeline builds/pushes; CDK does not bake DockerImageAsset) --
-    this.repository = new ecr.Repository(this, 'Repository', {
-      repositoryName: ECR_REPOSITORY_NAME,
-      imageScanOnPush: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
+    // OrganizationStack / MCPCICD Build may already have created this name.
+    this.repository = ecr.Repository.fromRepositoryName(this, 'Repository', ECR_REPOSITORY_NAME);
 
     const executionRole = new iam.Role(this, 'ExecutionRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -441,7 +437,10 @@ export class BroadWorksMcpStack extends cdk.Stack {
       cfnTaskDefinition.addPropertyOverride(`ContainerDefinitions.${index}.ReadonlyRootFilesystem`, true);
     }
 
-    this.service = new ecs.FargateService(this, 'Service', {
+    // New logical ID: the live stack still has ApplicationLoadBalancedFargateService
+    // 'Service'. Updating that resource to CODE_DEPLOY fails CloudFormation
+    // validation (controller, load balancers, and ServiceName cannot change).
+    this.service = new ecs.FargateService(this, 'BlueGreenService', {
       cluster: this.cluster,
       serviceName: ECS_SERVICE_NAME,
       taskDefinition,
@@ -705,13 +704,9 @@ export class BroadWorksMcpStack extends cdk.Stack {
     dataKey.grantEncryptDecrypt(taskRole);
 
     if (pipelineAccount) {
-      const pipelinePrincipal = new iam.AccountPrincipal(pipelineAccount);
-
-      const ecrPushRole = new iam.Role(this, 'EcrPushRole', {
-        roleName: ECR_PUSH_ROLE_NAME,
-        assumedBy: pipelinePrincipal,
-        description: 'Assumed by the MCPCICD pipeline to push/pull this account ECR and read the live task definition',
-      });
+      // OrganizationStack creates these names so Build can assume them before
+      // this stack exists. Recreating them here fails with EntityAlreadyExists.
+      const ecrPushRole = iam.Role.fromRoleName(this, 'EcrPushRole', ECR_PUSH_ROLE_NAME);
       this.repository.grantPullPush(ecrPushRole);
       ecrPushRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
@@ -726,11 +721,7 @@ export class BroadWorksMcpStack extends cdk.Stack {
         }),
       );
 
-      const pipelineDeployRole = new iam.Role(this, 'PipelineDeployRole', {
-        roleName: PIPELINE_DEPLOY_ROLE_NAME,
-        assumedBy: pipelinePrincipal,
-        description: 'Assumed by CodePipeline for CodeDeploy To ECS in this account',
-      });
+      const pipelineDeployRole = iam.Role.fromRoleName(this, 'PipelineDeployRole', PIPELINE_DEPLOY_ROLE_NAME);
       pipelineDeployRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: [

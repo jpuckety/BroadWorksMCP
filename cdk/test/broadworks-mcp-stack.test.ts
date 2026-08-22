@@ -8,6 +8,7 @@ import {
   APP_HEALTH_CHECK_PATH,
   BroadWorksMcpStack,
   CODEDEPLOY_APPLICATION_NAME,
+  ECR_REPOSITORY_NAME,
   ECR_PUSH_ROLE_NAME,
   PIPELINE_DEPLOY_ROLE_NAME,
   PLACEHOLDER_IMAGE,
@@ -30,6 +31,12 @@ function synth(props: Partial<ConstructorParameters<typeof BroadWorksMcpStack>[2
 }
 
 describe('BroadWorksMcpStack', () => {
+  test('replaces the rolling Service construct with BlueGreenService', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../lib/broadworks-mcp-stack.ts'), 'utf8');
+    expect(src).toContain("new ecs.FargateService(this, 'BlueGreenService'");
+    expect(src).not.toContain('new ecsPatterns.ApplicationLoadBalancedFargateService');
+  });
+
   test('uses CODE_DEPLOY, two target groups, ECR, and no DockerImageAsset', () => {
     const template = synth();
 
@@ -54,10 +61,9 @@ describe('BroadWorksMcpStack', () => {
       TargetType: 'ip',
     });
 
-    template.hasResourceProperties('AWS::ECR::Repository', {
-      RepositoryName: 'broadworks-mcp',
-      ImageScanningConfiguration: { ScanOnPush: true },
-    });
+    const json = JSON.stringify(template.toJSON());
+    expect(json).toContain(ECR_REPOSITORY_NAME);
+    expect(json).not.toMatch(/"AWS::ECR::Repository"/);
 
     template.hasResourceProperties('AWS::CodeDeploy::Application', {
       ApplicationName: CODEDEPLOY_APPLICATION_NAME,
@@ -65,7 +71,6 @@ describe('BroadWorksMcpStack', () => {
     });
     template.resourceCountIs('AWS::CodeDeploy::DeploymentGroup', 1);
 
-    const json = JSON.stringify(template.toJSON());
     expect(json).not.toMatch(/DockerImageAsset/);
     expect(json).not.toMatch(/aws:cdk:path:.+ImageAsset/);
     expect(json).toContain(PLACEHOLDER_IMAGE);
@@ -101,14 +106,16 @@ describe('BroadWorksMcpStack', () => {
     });
   });
 
-  test('pipeline roles trust the pipeline account', () => {
+  test('pipeline roles are imported and granted by name', () => {
     const template = synth();
-    template.hasResourceProperties('AWS::IAM::Role', { RoleName: ECR_PUSH_ROLE_NAME });
-    template.hasResourceProperties('AWS::IAM::Role', { RoleName: PIPELINE_DEPLOY_ROLE_NAME });
+    const roles = Object.values(template.findResources('AWS::IAM::Role'));
+    expect(roles.some((role) => role.Properties?.RoleName === ECR_PUSH_ROLE_NAME)).toBe(false);
+    expect(roles.some((role) => role.Properties?.RoleName === PIPELINE_DEPLOY_ROLE_NAME)).toBe(false);
     const json = JSON.stringify(template.toJSON());
     expect(json).toContain(ECR_PUSH_ROLE_NAME);
     expect(json).toContain(PIPELINE_DEPLOY_ROLE_NAME);
-    expect(json).toContain(`${PIPELINE_ACCOUNT}:root`);
+    expect(json).toContain('ecs:DescribeTaskDefinition');
+    expect(json).toContain(PIPELINE_ACCOUNT);
   });
 
   test('container name, port, and health path match the Dockerfile contract', () => {
