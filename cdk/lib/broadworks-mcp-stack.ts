@@ -29,8 +29,11 @@ export const CODEDEPLOY_APPLICATION_NAME = 'broadworks-mcp';
 export const CODEDEPLOY_DEPLOYMENT_GROUP_NAME = 'broadworks-mcp';
 export const ECR_PUSH_ROLE_NAME = 'BroadWorksMcpEcrPushRole';
 export const PIPELINE_DEPLOY_ROLE_NAME = 'BroadWorksMcpPipelineDeployRole';
-/** Public image used until CodeDeploy rolls the real digest. Must provide `sh`/`chown` for volume-init. */
-export const PLACEHOLDER_IMAGE = 'public.ecr.aws/amazonlinux/amazonlinux:2023';
+/** Public image used until CodeDeploy rolls the real digest. Must provide `sh`/`chown` for volume-init and `httpd` so the essential container stays up and answers ALB `/actuator/health`. */
+export const PLACEHOLDER_IMAGE = 'public.ecr.aws/docker/library/busybox:1.36';
+/** Foreground httpd on the writable `/tmp` volume. Stripped by prepare-taskdef before CodeDeploy. */
+export const PLACEHOLDER_APP_COMMAND =
+  'mkdir -p /tmp/www/actuator && printf \'{"status":"UP"}\\n\' > /tmp/www/actuator/health && exec httpd -f -p 8080 -h /tmp/www';
 
 export interface BroadWorksMcpStackProps extends cdk.StackProps {
   /**
@@ -360,12 +363,19 @@ export class BroadWorksMcpStack extends cdk.Stack {
     });
 
     const appLogDriver = ecs.LogDrivers.awsLogs({ streamPrefix: 'broadworks-mcp', logGroup });
+    const usingPlaceholder = imageUri === PLACEHOLDER_IMAGE;
     const appContainer = taskDefinition.addContainer('App', {
       containerName: APP_CONTAINER_NAME,
       image,
       portMappings: [{ containerPort: APP_CONTAINER_PORT }],
       logging: appLogDriver,
       essential: true,
+      // amazonlinux/busybox default CMD exits immediately ("Essential container in task exited")
+      // and will not pass ALB /actuator/health. Only override the placeholder; a real imageUri
+      // must keep the image ENTRYPOINT so Spring Boot can start.
+      ...(usingPlaceholder
+        ? { entryPoint: ['sh', '-c'], command: [PLACEHOLDER_APP_COMMAND] }
+        : {}),
       environment: {
         STORAGE_BACKEND: 'DYNAMODB',
         SESSION_TABLE: sessionsTable.tableName,

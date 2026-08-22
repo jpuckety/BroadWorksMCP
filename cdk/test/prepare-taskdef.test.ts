@@ -20,6 +20,8 @@ const liveDescribe = {
         name: 'broadworks-mcp',
         image: '222222222222.dkr.ecr.us-east-1.amazonaws.com/broadworks-mcp@sha256:aaa',
         essential: true,
+        entryPoint: ['sh', '-c'],
+        command: ['mkdir -p /tmp/www/actuator && httpd -f -p 8080 -h /tmp/www'],
         environment: [{ name: 'STORAGE_BACKEND', value: 'DYNAMODB' }],
         secrets: [{ name: 'ALPACA_LICENSE_KEY', valueFrom: 'arn:aws:ssm:us-east-1:222222222222:parameter/x' }],
         mountPoints: [{ sourceVolume: 'tmp', containerPath: '/tmp' }],
@@ -53,10 +55,13 @@ describe('prepare-taskdef', () => {
     const app = td.containerDefinitions.find((c: { name: string }) => c.name === 'broadworks-mcp');
     const init = td.containerDefinitions.find((c: { name: string }) => c.name === 'volume-init');
     expect(app.image).toBe('<IMAGE1_NAME>');
+    expect(app.entryPoint).toBeUndefined();
+    expect(app.command).toBeUndefined();
     expect(app.environment[0].value).toBe('DYNAMODB');
     expect(app.secrets).toHaveLength(1);
     expect(init.image).toBe('public.ecr.aws/amazonlinux/amazonlinux:2023');
     expect(init.essential).toBe(false);
+    expect(init.command).toEqual(['chown -R 10001:10001 /app/.cache']);
   });
 
   test('appspec names the app container and port 8080', () => {

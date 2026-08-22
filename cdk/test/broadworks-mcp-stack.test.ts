@@ -106,6 +106,43 @@ describe('BroadWorksMcpStack', () => {
     });
   });
 
+  test('placeholder app container stays running and answers the ALB health check', () => {
+    const template = synth();
+
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Name: APP_CONTAINER_NAME,
+          Essential: true,
+          Image: PLACEHOLDER_IMAGE,
+          EntryPoint: ['sh', '-c'],
+          Command: Match.arrayWith([
+            Match.stringLikeRegexp('httpd'),
+          ]),
+        }),
+      ]),
+    });
+
+    const taskDefs = Object.values(template.findResources('AWS::ECS::TaskDefinition'));
+    const app = taskDefs[0].Properties.ContainerDefinitions.find(
+      (c: { Name: string }) => c.Name === APP_CONTAINER_NAME,
+    );
+    expect(app.Command.join(' ')).toMatch(/8080/);
+    expect(app.Command.join(' ')).toMatch(/actuator\/health/);
+  });
+
+  test('real imageUri does not keep the placeholder listen command', () => {
+    const template = synth({
+      imageUri: '222222222222.dkr.ecr.us-east-1.amazonaws.com/broadworks-mcp@sha256:abc',
+    });
+    const taskDefs = Object.values(template.findResources('AWS::ECS::TaskDefinition'));
+    const app = taskDefs[0].Properties.ContainerDefinitions.find(
+      (c: { Name: string }) => c.Name === APP_CONTAINER_NAME,
+    );
+    expect(app.Command).toBeUndefined();
+    expect(app.EntryPoint).toBeUndefined();
+  });
+
   test('pipeline roles are imported and granted by name', () => {
     const template = synth();
     const roles = Object.values(template.findResources('AWS::IAM::Role'));

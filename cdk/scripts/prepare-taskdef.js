@@ -2,8 +2,9 @@
 
 /**
  * Turn `aws ecs describe-task-definition` JSON into a CodeDeploy taskdef.json:
- * strip registration-only fields and replace only the app container image with
- * `<IMAGE1_NAME>` so the volume-init sidecar is left unchanged.
+ * strip registration-only fields, replace only the app container image with
+ * `<IMAGE1_NAME>`, and drop the placeholder entryPoint/command so the real
+ * image ENTRYPOINT runs. The volume-init sidecar is left unchanged.
  *
  * Usage: node prepare-taskdef.js [input.json] > taskdef.json
  */
@@ -56,10 +57,25 @@ function substituteAppImage(td, placeholder, containerName) {
   return td;
 }
 
+function clearAppPlaceholderOverride(td, containerName) {
+  const name = containerName || APP_CONTAINER_NAME;
+  if (!Array.isArray(td.containerDefinitions)) {
+    return td;
+  }
+  for (const container of td.containerDefinitions) {
+    if (container.name === name) {
+      delete container.command;
+      delete container.entryPoint;
+    }
+  }
+  return td;
+}
+
 function prepareTaskdef(input, options) {
   const opts = options || {};
   const td = stripRegisteredFields(unwrapTaskDefinition(input));
-  return substituteAppImage(td, opts.placeholder, opts.containerName);
+  substituteAppImage(td, opts.placeholder, opts.containerName);
+  return clearAppPlaceholderOverride(td, opts.containerName);
 }
 
 function appspecYaml(containerName, containerPort) {
@@ -85,6 +101,7 @@ module.exports = {
   unwrapTaskDefinition,
   stripRegisteredFields,
   substituteAppImage,
+  clearAppPlaceholderOverride,
   prepareTaskdef,
   appspecYaml,
 };
