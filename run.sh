@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
-# run.sh — convenience wrapper around the common broadworks-mcp build and
-# deploy/undeploy actions.
+# run.sh — local build, test, and run wrapper for broadworks-mcp.
 #
-# This is a thin dispatcher over the same commands documented in README.md
-# (Maven with the `install-alpaca` profile for the app, and AWS CDK for the
-# infrastructure). It exists so the day-to-day workflow is a single command.
+# AWS deploy, image promotion, and SSM secrets are owned by MCPCICD
+# (https://github.com/jpuckety/MCPCICD). This script is for laptop use:
+# Maven, local HTTP/stdio servers, docker build, and optional CDK synth.
 #
 # Usage:
 #   ./run.sh <command> [extra args...]
@@ -21,9 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}"
 CDK_DIR="${PROJECT_ROOT}/cdk"
 
-# Local, git-ignored file holding per-developer environment overrides and
-# secrets (e.g. GOOGLE_CLIENT_ID/SECRET, PUBLIC_HOSTNAME, KMS_KEY_ID). See
-# .env.example for the full list. Override the location with ENV_FILE=... .
+# Local, git-ignored file holding per-developer secrets (GOOGLE_CLIENT_ID /
+# GOOGLE_CLIENT_SECRET, ALPACA_LICENSE_KEY). See .env.example. Override the
+# location with ENV_FILE=... .
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
 
 # The Maven profile that installs the Alpaca toolkit JARs from lib/ during the
@@ -32,37 +31,6 @@ ALPACA_PROFILE="install-alpaca"
 
 # Container image name used by the `docker-build` command.
 IMAGE_NAME="${IMAGE_NAME:-broadworks-mcp:latest}"
-
-# Container registry (ECR) configuration used by the `refresh-image` command.
-# The repository may be given either as a full URI via ECR_REPOSITORY_URI
-# (<account>.dkr.ecr.<region>.amazonaws.com/<name>) or as a bare name via
-# ECR_REPOSITORY (the registry host is then derived from the caller's account
-# and region). IMAGE_TAG is the tag pushed to ECR and pulled by the tasks.
-ECR_REPOSITORY="${ECR_REPOSITORY:-broadworks-mcp}"
-ECR_REPOSITORY_URI="${ECR_REPOSITORY_URI:-}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-
-# ECS cluster/service running the image. `refresh-image` forces a new deployment
-# on them so the tasks pull the freshly pushed image. When unset, the push still
-# happens but the service refresh is skipped (with a warning).
-ECS_CLUSTER="${ECS_CLUSTER:-}"
-ECS_SERVICE="${ECS_SERVICE:-}"
-
-# SSM SecureString parameter names for secrets the ECS task injects. These default
-# to the same paths the CDK app reads (see cdk/lib/broadworks-mcp-stack.ts) and
-# can be overridden to match a custom `ssm` CDK context.
-SSM_GOOGLE_CLIENT_ID_PARAM="${SSM_GOOGLE_CLIENT_ID_PARAM:-/broadworks-mcp/google-client-id}"
-SSM_GOOGLE_CLIENT_SECRET_PARAM="${SSM_GOOGLE_CLIENT_SECRET_PARAM:-/broadworks-mcp/google-client-secret}"
-SSM_ALPACA_LICENSE_KEY_PARAM="${SSM_ALPACA_LICENSE_KEY_PARAM:-/broadworks-mcp/alpaca-license-key}"
-
-# Local Alpaca license file used by push-secrets (git-ignored). Override path with
-# ALPACA_LICENSE_FILE=... if needed.
-ALPACA_LICENSE_FILE="${ALPACA_LICENSE_FILE:-${PROJECT_ROOT}/alpaca-license.txt}"
-
-# Optional ACM certificate ARN for the HTTPS ALB listener. May also be passed
-# on the command line (see `deploy`). Falls back to the env var the CDK app
-# already understands.
-CERTIFICATE_ARN="${CERTIFICATE_ARN:-}"
 
 # Allow using a specific JDK 21 without changing the ambient environment, e.g.
 #   JAVA_HOME=/path/to/jdk21 ./run.sh build
@@ -100,20 +68,14 @@ load_dotenv() {
     [[ -z "${line}" || "${line}" == \#* ]] && continue
     # Allow an optional leading 'export '.
     line="${line#export }"
-    # Must look like KEY=VALUE.
     [[ "${line}" == *=* ]] || continue
     key="${line%%=*}"
     value="${line#*=}"
-    # Trim whitespace around the key.
     key="${key%"${key##*[![:space:]]}"}"
     key="${key#"${key%%[![:space:]]*}"}"
-    # Only accept valid shell identifiers.
     [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Trim whitespace around the (still unquoted) value; quoted values keep
-    # their inner whitespace because the quotes are stripped afterwards.
     value="${value%"${value##*[![:space:]]}"}"
     value="${value#"${value%%[![:space:]]*}"}"
-    # Strip a single pair of surrounding quotes from the value.
     if [[ ( "${value}" == \"*\" || "${value}" == \'*\' ) && ${#value} -ge 2 ]]; then
       value="${value:1:${#value}-2}"
     fi
@@ -135,7 +97,7 @@ mvn_build() {
 # localhost defaults fail. Test runs are executed with these unset.
 TEST_ISOLATED_VARS=(
   PUBLIC_HOSTNAME OIDC_ISSUER_URI GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
-  STORAGE_BACKEND SESSION_TABLE USER_CONFIG_TABLE KMS_KEY_ID APPLICATION_ID
+  STORAGE_BACKEND SESSION_TABLE HTTP_SESSION_TABLE USER_CONFIG_TABLE KMS_KEY_ID APPLICATION_ID
   OAUTH_REDIRECT_ALLOWLIST OAUTH_ALLOW_WELL_KNOWN_CLIENTS CORS_ALLOWED_ORIGINS CORS_ENABLED
   ALPACA_LIVE ALPACA_LICENSE_KEY ALLOW_PRIVATE_NETWORK_TARGETS
 )
@@ -158,56 +120,6 @@ resolve_jar() {
   jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
   [[ -n "${jar}" ]] || die "No runnable jar found in target/. Run './run.sh build' first."
   printf '%s\n' "${jar}"
-}
-
-# Resolve the repackaged Spring Boot jar, building it first if it is missing. Progress logs go to
-# stderr so callers can capture the jar path (the sole stdout line) cleanly.
-resolve_or_build_jar() {
-  local jar
-  jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
-  if [[ -z "${jar}" ]]; then
-    log "No runnable jar found in target/ — building it to render the MCP capability listing..." >&2
-    cmd_build 1>&2
-    jar="$(ls -1 "${PROJECT_ROOT}"/target/broadworks-mcp-*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1 || true)"
-    [[ -n "${jar}" ]] || die "Build did not produce a runnable jar in target/."
-  fi
-  printf '%s\n' "${jar}"
-}
-
-# Derive the deployed MCP endpoint URL (…/mcp) from the CDK stack outputs written by `cdk deploy
-# --outputs-file`. Prefers the Route 53 PublicUrl; otherwise builds it from the ALB DNS name, using
-# https when a certificate is configured (the ALB then listens on TLS) and http otherwise.
-mcp_url_from_outputs() {
-  local outputs_file="$1"
-  [[ -f "${outputs_file}" ]] || return 0
-  command -v jq >/dev/null 2>&1 || return 0
-  local public_url lb_dns
-  public_url="$(jq -r '.BroadWorksMcpStack.PublicUrl // empty' "${outputs_file}" 2>/dev/null || true)"
-  lb_dns="$(jq -r '.BroadWorksMcpStack.LoadBalancerDns // empty' "${outputs_file}" 2>/dev/null || true)"
-  if [[ -n "${public_url}" ]]; then
-    printf '%s/mcp\n' "${public_url%/}"
-  elif [[ -n "${lb_dns}" ]]; then
-    if [[ -n "${CERTIFICATE_ARN}" ]]; then
-      printf 'https://%s/mcp\n' "${lb_dns}"
-    else
-      printf 'http://%s/mcp\n' "${lb_dns}"
-    fi
-  fi
-}
-
-# Print MCP-compliant `tools/list`, `resources/list` and `prompts/list` JSON-RPC responses (as a
-# JSON-RPC 2.0 batch) for the just-deployed server to standard out. The catalogue is rendered offline
-# from the application's own registry (no live call, no auth); the endpoint URL is taken from the CDK
-# stack outputs. The JSON itself is written to stdout; human-readable framing goes to stderr so the
-# response stays cleanly parseable.
-emit_mcp_registration() {
-  require java
-  local outputs_file="$1"
-  local mcp_url jar
-  mcp_url="$(mcp_url_from_outputs "${outputs_file}")"
-  jar="$(resolve_or_build_jar)"
-  warn "MCP registration (tools/list, resources/list, prompts/list) for the deployed BroadWorks MCP server${mcp_url:+ at ${mcp_url}}:"
-  ALPACA_LIVE=false java -jar "${jar}" --dump-tools "${mcp_url:-}"
 }
 
 # --------------------------------------------------------------------------
@@ -246,8 +158,9 @@ cmd_run() {
   require java
   local jar; jar="$(resolve_jar)"
   log "Starting HTTP MCP server (in-memory storage) on :8080 ..."
-  # No PUBLIC_HOSTNAME locally: the app defaults its base URL to http://localhost:8080.
-  STORAGE_BACKEND="${STORAGE_BACKEND:-IN_MEMORY}" \
+  # Force laptop defaults so leftover AWS/CDK values in .env cannot leak in.
+  STORAGE_BACKEND=IN_MEMORY \
+  PUBLIC_HOSTNAME= \
     java -jar "${jar}" "$@"
 }
 
@@ -255,7 +168,9 @@ cmd_run_stdio() {
   require java
   local jar; jar="$(resolve_jar)"
   log "Starting stdio MCP server (in-memory storage; logs to stderr) ..."
-  java -Dspring.profiles.active=stdio -jar "${jar}" "$@"
+  STORAGE_BACKEND=IN_MEMORY \
+  PUBLIC_HOSTNAME= \
+    java -Dspring.profiles.active=stdio -jar "${jar}" "$@"
 }
 
 # --------------------------------------------------------------------------
@@ -268,141 +183,8 @@ cmd_docker_build() {
   log "Built image: ${IMAGE_NAME}"
 }
 
-# Resolve the AWS region for ECR/ECS calls, falling back to the configured
-# default when neither AWS_REGION nor AWS_DEFAULT_REGION is set.
-ecr_region() {
-  local region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
-  if [[ -z "${region}" ]]; then
-    region="$(aws configure get region 2>/dev/null || true)"
-  fi
-  [[ -n "${region}" ]] || die "No AWS region set. Export AWS_REGION (or configure a default region) before refreshing the image."
-  printf '%s\n' "${region}"
-}
-
-# Resolve the fully-qualified ECR repository URI. Prefers ECR_REPOSITORY_URI
-# when given; otherwise derives <account>.dkr.ecr.<region>.amazonaws.com from the
-# caller's identity and appends the bare ECR_REPOSITORY name.
-resolve_ecr_repository_uri() {
-  if [[ -n "${ECR_REPOSITORY_URI}" ]]; then
-    printf '%s\n' "${ECR_REPOSITORY_URI}"
-    return 0
-  fi
-  local region account
-  region="$(ecr_region)"
-  account="$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)"
-  [[ -n "${account}" && "${account}" != "None" ]] || die "Unable to determine the AWS account id (aws sts get-caller-identity). Check your AWS credentials."
-  printf '%s.dkr.ecr.%s.amazonaws.com/%s\n' "${account}" "${region}" "${ECR_REPOSITORY}"
-}
-
-# Build the image, push it to ECR, and force a new ECS deployment so the running
-# tasks pull the freshly pushed tag.
-cmd_refresh_image() {
-  require docker
-  require aws
-
-  local region repo_uri registry repo_name remote
-  region="$(ecr_region)"
-  repo_uri="$(resolve_ecr_repository_uri)"
-  registry="${repo_uri%%/*}"
-  repo_name="${repo_uri##*/}"
-  remote="${repo_uri}:${IMAGE_TAG}"
-
-  # 1. Build the image locally (reuses IMAGE_NAME).
-  cmd_docker_build
-
-  # 2. Authenticate Docker to the ECR registry.
-  log "Logging in to ECR registry ${registry}..."
-  aws ecr get-login-password --region "${region}" \
-    | docker login --username AWS --password-stdin "${registry}"
-
-  # Create the repository on first push so a fresh account works out of the box.
-  if ! aws ecr describe-repositories --region "${region}" --repository-names "${repo_name}" >/dev/null 2>&1; then
-    log "Creating ECR repository '${repo_name}'..."
-    aws ecr create-repository --region "${region}" --repository-name "${repo_name}" >/dev/null
-  fi
-
-  # 3. Tag and push the image to ECR.
-  log "Tagging ${IMAGE_NAME} as ${remote}..."
-  docker tag "${IMAGE_NAME}" "${remote}"
-  log "Pushing ${remote}..."
-  docker push "${remote}"
-
-  # 4. Refresh the ECS service so tasks roll over to the new image.
-  if [[ -n "${ECS_CLUSTER}" && -n "${ECS_SERVICE}" ]]; then
-    log "Forcing a new deployment of ECS service '${ECS_SERVICE}' on cluster '${ECS_CLUSTER}'..."
-    aws ecs update-service \
-      --region "${region}" \
-      --cluster "${ECS_CLUSTER}" \
-      --service "${ECS_SERVICE}" \
-      --force-new-deployment \
-      >/dev/null
-    log "Deployment triggered. Tasks will roll over to ${remote}."
-  else
-    warn "ECS_CLUSTER and/or ECS_SERVICE not set — skipping the service refresh."
-    warn "Set them (e.g. ECS_CLUSTER=... ECS_SERVICE=... ./run.sh refresh-image) to force a rolling deployment."
-  fi
-
-  log "Done: built and pushed ${remote}."
-}
-
 # --------------------------------------------------------------------------
-# Secrets (SSM) action
-# --------------------------------------------------------------------------
-# Push a single SSM SecureString parameter, overwriting any existing value.
-# Encrypts with the default SSM KMS key (aws/ssm); pass --region when AWS_REGION
-# is set so the parameter lands in the expected account/region.
-put_secure_param() {
-  local name="$1" value="$2"
-  local region_args=()
-  [[ -n "${AWS_REGION:-}" ]] && region_args=(--region "${AWS_REGION}")
-  aws ssm put-parameter \
-    "${region_args[@]+"${region_args[@]}"}" \
-    --name "${name}" \
-    --type SecureString \
-    --value "${value}" \
-    --overwrite \
-    >/dev/null
-  log "Pushed ${name}"
-}
-
-# Load the Alpaca license from ALPACA_LICENSE_FILE (default: repo-root alpaca-license.txt).
-# Supports multi-line file content (unlike .env KEY=VALUE). Trims a single trailing newline.
-load_alpaca_license_from_file() {
-  local file="${ALPACA_LICENSE_FILE}"
-  [[ -f "${file}" ]] || die "Alpaca license file not found: ${file#${PROJECT_ROOT}/} (set ALPACA_LICENSE_FILE=... to override)."
-  local value
-  # Preserve internal newlines; strip one trailing newline from the file if present.
-  value="$(cat "${file}")"
-  value="${value%$'\n'}"
-  [[ -n "${value}" ]] || die "Alpaca license file is empty: ${file#${PROJECT_ROOT}/}"
-  printf '%s' "${value}"
-}
-
-# Push Google OAuth secrets from .env and the Alpaca license from alpaca-license.txt into
-# SSM as SecureString parameters so the deployed ECS task (ecs.Secret.fromSsmParameter)
-# picks them up. GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET come from .env (or the environment);
-# ALPACA_LICENSE_KEY for the push is read from ALPACA_LICENSE_FILE (default alpaca-license.txt).
-cmd_push_secrets() {
-  require aws
-  local missing=()
-  [[ -n "${GOOGLE_CLIENT_ID:-}" ]]     || missing+=(GOOGLE_CLIENT_ID)
-  [[ -n "${GOOGLE_CLIENT_SECRET:-}" ]] || missing+=(GOOGLE_CLIENT_SECRET)
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    die "Missing required value(s): ${missing[*]}. Set them in ${ENV_FILE#${PROJECT_ROOT}/} (or the environment) before pushing."
-  fi
-  local alpaca_license
-  alpaca_license="$(load_alpaca_license_from_file)"
-  log "Pushing secrets into SSM${AWS_REGION:+ (region ${AWS_REGION})}..."
-  log "  Google OAuth from ${ENV_FILE#${PROJECT_ROOT}/} (or environment)"
-  log "  Alpaca license from ${ALPACA_LICENSE_FILE#${PROJECT_ROOT}/}"
-  put_secure_param "${SSM_GOOGLE_CLIENT_ID_PARAM}"     "${GOOGLE_CLIENT_ID}"
-  put_secure_param "${SSM_GOOGLE_CLIENT_SECRET_PARAM}" "${GOOGLE_CLIENT_SECRET}"
-  put_secure_param "${SSM_ALPACA_LICENSE_KEY_PARAM}"   "${alpaca_license}"
-  log "Done. Deploy (or restart the service) so the task picks up the new values."
-}
-
-# --------------------------------------------------------------------------
-# CDK (deploy / undeploy) actions
+# CDK synth (local stack check; deploy is MCPCICD)
 # --------------------------------------------------------------------------
 cdk_run() {
   require npx
@@ -416,55 +198,9 @@ cmd_cdk_install() {
   ( cd "${CDK_DIR}" && npm install --no-audit --no-fund )
 }
 
-# Build the certificate context arg (if a cert ARN is available) plus any
-# extra args the caller passed through.
-cdk_cert_args() {
-  if [[ -n "${CERTIFICATE_ARN}" ]]; then
-    printf -- '-c\ncertificateArn=%s\n' "${CERTIFICATE_ARN}"
-  fi
-}
-
 cmd_synth() {
   log "Synthesizing the CloudFormation template..."
-  local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
-  cdk_run synth "${args[@]+"${args[@]}"}" "$@"
-}
-
-cmd_bootstrap() {
-  log "Bootstrapping the CDK environment (one-time per account/region)..."
-  cdk_run bootstrap "$@"
-}
-
-cmd_deploy() {
-  # First positional arg may be a certificate ARN for convenience:
-  #   ./run.sh deploy arn:aws:acm:...:certificate/...
-  if [[ "${1:-}" == arn:aws:acm:* ]]; then
-    CERTIFICATE_ARN="$1"; shift
-  fi
-  if [[ -z "${CERTIFICATE_ARN}" ]]; then
-    warn "No certificateArn provided — the ALB will listen on HTTP only (development)."
-    warn "Provide one via: ./run.sh deploy arn:aws:acm:... | CERTIFICATE_ARN=arn... ./run.sh deploy"
-  fi
-
-  cmd_build
-
-  local args=(); while IFS= read -r a; do [[ -n "$a" ]] && args+=("$a"); done < <(cdk_cert_args)
-  # Capture the stack outputs (ALB DNS / public URL) so the deployed MCP endpoint can be surfaced
-  # alongside its tool catalogue once the deployment succeeds.
-  local outputs_file; outputs_file="$(mktemp -t bwmcp-cdk-outputs.XXXXXX)"
-  # shellcheck disable=SC2064
-  trap "rm -f '${outputs_file}'" RETURN
-
-  # Surface MCP-compliant tools/list, resources/list and prompts/list responses for the deployment.
-  emit_mcp_registration "${outputs_file}"
-
-  log "Deploying the BroadWorksMcpStack (builds the Docker image as a CDK asset)..."
-  cdk_run deploy --outputs-file "${outputs_file}" "${args[@]+"${args[@]}"}" "$@"
-}
-
-cmd_undeploy() {
-  log "Destroying the BroadWorksMcpStack..."
-  cdk_run destroy "$@"
+  cdk_run synth "$@"
 }
 
 # --------------------------------------------------------------------------
@@ -473,7 +209,7 @@ cmd_undeploy() {
 cmd_all() {
   cmd_install_alpaca
   cmd_verify
-  log "Build + tests complete. Use './run.sh deploy' to provision AWS infrastructure."
+  log "Build + tests complete."
 }
 
 # --------------------------------------------------------------------------
@@ -481,9 +217,11 @@ cmd_all() {
 # --------------------------------------------------------------------------
 usage() {
   cat <<'EOF'
-run.sh — build and deploy/undeploy wrapper for broadworks-mcp
+run.sh — local build, test, and run wrapper for broadworks-mcp
 
 Usage: ./run.sh <command> [extra args...]
+
+AWS deploy, image promotion, and SSM secrets live in MCPCICD, not here.
 
 Build & test:
   install-alpaca   Install the Alpaca toolkit JARs from lib/ into the local Maven repo.
@@ -499,56 +237,24 @@ Run locally:
 
 Container:
   docker-build     Build the container image from the Dockerfile (IMAGE_NAME env, default broadworks-mcp:latest).
-  refresh-image    Build the image, push it to ECR, and force a new ECS deployment
-                   (ECR_REPOSITORY/ECR_REPOSITORY_URI, IMAGE_TAG, ECS_CLUSTER, ECS_SERVICE).
 
-Secrets (AWS SSM):
-  push-secrets     Push Google OAuth secrets from .env (GOOGLE_CLIENT_ID,
-                   GOOGLE_CLIENT_SECRET) and the Alpaca license from
-                   alpaca-license.txt into SSM as SecureString parameters.
-
-Deploy (AWS CDK):
+CDK (local check only):
   cdk-install      Install CDK Node dependencies (cdk/).
   synth            Synthesize the CloudFormation template.
-  bootstrap        Bootstrap the CDK environment (one-time per account/region).
-  deploy [certArn] Deploy the BroadWorksMcpStack (builds the image as a CDK asset), then print an
-                   MCP-compliant tools/list, resources/list and prompts/list registration response
-                   (rendered offline; no auth) for the deployed endpoint on standard out.
-  undeploy         Destroy the BroadWorksMcpStack.
 
 Environment overrides:
   JAVA_HOME         JDK 21 to use for Maven/java.
-  IMAGE_NAME        Docker image tag for docker-build (and the local build refresh-image pushes).
-  ECR_REPOSITORY    ECR repository name for refresh-image (default broadworks-mcp); the
-                    registry host is derived from your AWS account/region.
-  ECR_REPOSITORY_URI  Full ECR repository URI for refresh-image; overrides ECR_REPOSITORY
-                    (<account>.dkr.ecr.<region>.amazonaws.com/<name>).
-  IMAGE_TAG         Tag pushed to ECR by refresh-image (default latest).
-  ECS_CLUSTER, ECS_SERVICE
-                    ECS cluster/service refreshed by refresh-image via a forced
-                    new deployment (skipped with a warning when unset).
-  CERTIFICATE_ARN   ACM certificate ARN for the HTTPS ALB listener (deploy/synth).
-  AWS_REGION        AWS region targeted by push-secrets (passed as --region).
-  SSM_GOOGLE_CLIENT_ID_PARAM, SSM_GOOGLE_CLIENT_SECRET_PARAM,
-  SSM_ALPACA_LICENSE_KEY_PARAM
-                    SSM parameter names for push-secrets (defaults
-                    /broadworks-mcp/google-client-id, .../google-client-secret,
-                    and .../alpaca-license-key).
-  ALPACA_LICENSE_FILE
-                    Path to the Alpaca license file read by push-secrets
-                    (default: <repo>/alpaca-license.txt).
-  PUBLIC_HOSTNAME   Public DNS hostname; the base URL is built as https://<hostname>
-                    (unset locally -> http://localhost:8080).
-  STORAGE_BACKEND, ...  Passed through to the local `run` command.
+  IMAGE_NAME        Docker image tag for docker-build (default broadworks-mcp:latest).
+  ENV_FILE          Path to the KEY=VALUE file (default: <repo>/.env).
 
 Configuration file:
   .env              Optional, git-ignored KEY=VALUE file at the repo root loaded
                     automatically on every command. Values already set in the
-                    environment take precedence. Override its path with ENV_FILE=...
-                    See .env.example for the supported variables.
+                    environment take precedence. See .env.example for the
+                    local-only variables. Pipeline / ECS do not read this file.
 
 Any extra args after the command are forwarded to the underlying tool
-(e.g. './run.sh test -Dtest=OpaqueTokenFactoryTest' or './run.sh deploy --require-approval never').
+(e.g. './run.sh test -Dtest=OpaqueTokenFactoryTest').
 EOF
 }
 
@@ -576,14 +282,12 @@ main() {
     run|run-http|run_http)         cmd_run "$@" ;;
     run-stdio|run_stdio)           cmd_run_stdio "$@" ;;
     docker-build|docker_build)     cmd_docker_build "$@" ;;
-    refresh-image|refresh_image)   cmd_refresh_image "$@" ;;
-    push-secrets|push_secrets)     cmd_push_secrets "$@" ;;
     cdk-install|cdk_install)       cmd_cdk_install "$@" ;;
     synth)                         cmd_synth "$@" ;;
-    bootstrap)                     cmd_bootstrap "$@" ;;
-    deploy)                        cmd_deploy "$@" ;;
-    undeploy|destroy)              cmd_undeploy "$@" ;;
     help|-h|--help)                usage ;;
+    push-secrets|push_secrets|refresh-image|refresh_image|deploy|undeploy|destroy|bootstrap)
+      die "'${cmd}' was removed from this repo. Use MCPCICD for AWS secrets, bootstrap, and deploy."
+      ;;
     *) warn "Unknown command: ${cmd}"; echo; usage; exit 2 ;;
   esac
 }

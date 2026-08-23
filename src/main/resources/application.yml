@@ -34,11 +34,14 @@ server:
   # The app runs behind a TLS-terminating Application Load Balancer that forwards plain HTTP to the
   # container while adding X-Forwarded-Proto/Port headers. Honor those headers so request-derived
   # URLs (notably the OAuth2 login callback redirect_uri) are rebuilt with the external https scheme
-  # instead of the internal http scheme. See Spring Boot "Use Behind a Proxy Server" (server.forward-headers-strategy).
-  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:framework}
+  # instead of the internal http scheme. See Spring Boot "Use Behind a Proxy Server".
+  # Default is correct for local tests and ECS; override with server.forward-headers-strategy if needed.
+  forward-headers-strategy: framework
 
 # ---------------------------------------------------------------------------
-# BroadWorks MCP configuration (all values externalized; see README env vars).
+# BroadWorks MCP configuration.
+# Env placeholders remain only for values ECS or a laptop .env actually injects.
+# Everything else uses the application default (also the value tests rely on).
 # ---------------------------------------------------------------------------
 broadworks:
   public:
@@ -49,7 +52,7 @@ broadworks:
   application:
     application-id: ${APPLICATION_ID:broadworks-mcp}
   oidc:
-    issuer-uri: ${OIDC_ISSUER_URI:https://accounts.google.com}
+    issuer-uri: https://accounts.google.com
     client-id: ${GOOGLE_CLIENT_ID:}
     client-secret: ${GOOGLE_CLIENT_SECRET:}
   storage:
@@ -62,23 +65,23 @@ broadworks:
     region: ${AWS_REGION:}
   auth:
     token:
-      access-token-ttl: ${ACCESS_TOKEN_TTL:PT1H}
-      refresh-token-ttl: ${REFRESH_TOKEN_TTL:P30D}
-      authorization-code-ttl: ${AUTH_CODE_TTL:PT5M}
-      pending-authorization-ttl: ${PENDING_AUTH_TTL:PT15M}
-      registered-client-ttl: ${REGISTERED_CLIENT_TTL:P90D}
+      access-token-ttl: PT1H
+      refresh-token-ttl: P30D
+      authorization-code-ttl: PT5M
+      pending-authorization-ttl: PT15M
+      registered-client-ttl: P90D
     redirect:
       allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
       # Additionally permit the callbacks of the well-known hosted MCP clients (Claude, ChatGPT,
       # Grok, vscode.dev) so they register without extra configuration. Loopback HTTP (RFC 8252
       # native clients such as Claude Desktop / MCP Inspector) is always allowed regardless.
-      allow-well-known-clients: ${OAUTH_ALLOW_WELL_KNOWN_CLIENTS:true}
+      allow-well-known-clients: true
   cors:
     # Origins allowed to call /mcp, the discovery documents, /oauth/register and /oauth2/** from a
     # browser (comma-separated). Empty -> the well-known hosted MCP client origins. Only these
     # origins are echoed back, which also serves as the MCP spec's Origin (DNS-rebinding) check.
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
-    enabled: ${CORS_ENABLED:true}
+    allowed-origins: []
+    enabled: true
   security:
     # SSRF guard for broadworks_add_connection: connection targets resolving to loopback, link-local
     # (including the 169.254.169.254 instance-metadata endpoint), RFC 1918 / unique-local private, any-
@@ -92,7 +95,7 @@ broadworks:
     # OCI server and a valid license; a tuned JCS cache.ccf may be supplied on the classpath or
     # via -Dalpaca.cache.config=/path/to/cache.ccf.
     live: ${ALPACA_LIVE:true}
-    connection-cache-ttl: ${ALPACA_CONNECTION_CACHE_TTL:PT30M}
+    connection-cache-ttl: PT30M
     # Alpaca toolkit license, supplied inline as a string (no on-disk license file required).
     # Leave empty to let the provisioned runtime supply the license (file / license manager).
     license-key: ${ALPACA_LICENSE_KEY:}

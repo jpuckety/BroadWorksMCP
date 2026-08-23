@@ -92,20 +92,11 @@ mvn -Pinstall-alpaca clean verify
 mvn -Pinstall-alpaca clean verify
 ```
 
-> **Tip:** the repo-root `run.sh` wraps the common build and deploy/undeploy
-> actions. Run `./run.sh help` for the full list; e.g. `./run.sh all`
-> (install-alpaca + verify), `./run.sh build`, `./run.sh test`, `./run.sh run`,
-> `./run.sh deploy` (set `PUBLIC_HOSTNAME` in `.env` to build the URL and the
-> certificate), `./run.sh undeploy`.
->
-> After a successful `./run.sh deploy`, the script prints an MCP-compliant
-> JSON-RPC registration response for the deployed server on standard out: a
-> JSON-RPC 2.0 batch containing the `tools/list`, `resources/list` and
-> `prompts/list` responses (the last two are empty — the server exposes tools
-> only). The catalogue is rendered offline from the application's own registry
-> (`java -jar … --dump-tools`) — no live call to the server and no
-> authentication — and the deployed `/mcp` endpoint (taken from the CDK stack
-> outputs) is surfaced under each response's `result._meta.serverUrl`.
+> **Tip:** the repo-root `run.sh` wraps local build, test, and run. Run
+> `./run.sh help` for the full list; e.g. `./run.sh all` (install-alpaca +
+> verify), `./run.sh build`, `./run.sh test`, `./run.sh run`, `./run.sh
+> docker-build`, `./run.sh synth`. AWS deploy, image promotion, and SSM
+> secrets are owned by [MCPCICD](https://github.com/jpuckety/MCPCICD).
 
 - Unit tests cover the token factory, both stores, encryption, ID-token verification, and the MCP
   tools.
@@ -149,8 +140,6 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | Variable | Default | Description |
 |---|---|---|
 | `PUBLIC_HOSTNAME` | *(empty)* | Public DNS hostname (no scheme/path), e.g. `mcp.example.com`. The base URL is built as `https://<hostname>` and used for discovery docs and the `resource_metadata` challenge. Empty locally → `http://localhost:8080`. |
-| `FORWARD_HEADERS_STRATEGY` | `framework` | How to honor `X-Forwarded-*` headers from the TLS-terminating ALB so request-derived URLs (e.g. the OAuth2 login callback `redirect_uri`) use the external `https` scheme. Set to `none` only when the app is not behind a trusted proxy. |
-| `OIDC_ISSUER_URI` | `https://accounts.google.com` | Upstream OIDC issuer. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth client id. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth client secret. |
 | `STORAGE_BACKEND` | `DYNAMODB` | `DYNAMODB` (durable) or `IN_MEMORY` (local/tests). |
@@ -161,15 +150,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
 | `APPLICATION_ID` | `broadworks-mcp` | Partition key for the per-user resource table. |
 | `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma-separated list of allowed redirect-URI prefixes for HTTPS **and** custom schemes (e.g. `https://app.example.com/,cursor://`). Loopback HTTP (`127.0.0.1` / `localhost`) is always allowed. |
-| `OAUTH_ALLOW_WELL_KNOWN_CLIENTS` | `true` | Also allow the callbacks of the well-known hosted MCP clients (`https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, `https://chatgpt.com/connector_platform_oauth_redirect`, `https://grok.com/connectors-oauth-exchange-code`, `https://vscode.dev/redirect`, `https://insiders.vscode.dev/redirect`) so they register without extra configuration. Set `false` to accept only `OAUTH_REDIRECT_ALLOWLIST`. |
-| `CORS_ENABLED` | `true` | Whether CORS (and therefore `OPTIONS` preflight) is handled on `/mcp`, `/.well-known/**`, `/oauth/register` and `/oauth2/**`. |
-| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins allowed to call those endpoints from a browser. Empty → the well-known hosted client origins (`https://claude.ai`, `https://claude.com`, `https://chatgpt.com`, `https://grok.com`). Only listed origins are echoed, which doubles as the MCP spec's `Origin` (DNS-rebinding) check; cookies are never allowed and `WWW-Authenticate` is exposed so a browser client can read the challenge. |
-| `ACCESS_TOKEN_TTL` | `PT1H` | Opaque access-token lifetime (capped by IdP ID-token expiry). |
-| `REFRESH_TOKEN_TTL` | `P30D` | Refresh-token lifetime. |
-| `AUTH_CODE_TTL` | `PT5M` | One-time authorization-code lifetime. |
-| `PENDING_AUTH_TTL` | `PT15M` | Pending-authorization state lifetime. |
-| `REGISTERED_CLIENT_TTL` | `P90D` | Registered (DCR) client lifetime. |
-| `ALPACA_CONNECTION_CACHE_TTL` | `PT30M` | Idle lifetime of a cached BroadWorks connection. |
+| `ALLOW_PRIVATE_NETWORK_TARGETS` | `false` | Disable the SSRF host guard so a laptop can reach a BroadWorks host on a private LAN. |
 | `ALPACA_LIVE` | `true` | Live BroadWorks OCI login via `LiveAlpacaConnectionFactory`. Default on for runtime; set `false` only for tests (the test suite sets this automatically). |
 | `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). In ECS, supplied from SSM `/broadworks-mcp/alpaca-license-key`. |
 | `LOG_LEVEL_ROOT` | `INFO` | Root log level (HTTP profile). |
@@ -177,6 +158,8 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `LOG_LEVEL_MCP_ENDPOINTS` | `DEBUG` | Level for the MCP **and** OAuth endpoint access logs (`co.pitayagroup.mcp.broadworks.web`: `McpEndpointLoggingFilter`, `OAuthEndpointLoggingFilter`). |
 | `LOG_LEVEL_MCP` | `INFO` | Level for the Spring AI MCP + MCP SDK protocol internals (`org.springframework.ai.mcp`, `io.modelcontextprotocol`). Set to `DEBUG`/`TRACE` to see the raw protocol handshake. |
 | `LOG_LEVEL_SECURITY` | `INFO` | Level for `org.springframework.security` (raise to `DEBUG` to trace the OAuth/Resource-Server filter chain). |
+
+Token lifetimes, CORS, the Google OIDC issuer, well-known OAuth client callbacks, `server.forward-headers-strategy`, and the Alpaca connection-cache TTL are **application defaults** in `application.yml` (and the matching `@ConfigurationProperties` records). Tests do not override them via environment variables. Change a Spring property if you ever need a non-default (for example `broadworks.auth.token.access-token-ttl=PT30M` or `server.forward-headers-strategy=none`).
 
 All values are externalized; there are no secrets or magic numbers in code.
 
@@ -400,15 +383,16 @@ pattern.
    aws ssm put-parameter --name /broadworks-mcp/alpaca-license-key   --type SecureString --value "<license>"
    ```
 
-   Or push from local files: Google OAuth from `.env` (`GOOGLE_CLIENT_ID` /
-   `GOOGLE_CLIENT_SECRET`) and the Alpaca license from repo-root
-   `alpaca-license.txt` (multi-line OK; git-ignored):
+   Or push per environment from [MCPCICD](https://github.com/jpuckety/MCPCICD)
+   (that repo's `.env.dev` / `.env.prod` plus `alpaca-license.dev.txt` /
+   `alpaca-license.prod.txt`). This repo's `.env` is local-only and is not
+   read by the pipeline or ECS:
 
    ```bash
-   ./run.sh push-secrets
+   # in MCPCICD
+   ./run.sh push-secrets-dev
+   ./run.sh push-secrets-prod
    ```
-
-   Set `AWS_REGION` (e.g. in `.env`) to target a specific region.
 
 2. Deploy infrastructure with the public hostname (placeholder image; CodeDeploy / MCPCICD ships
    the real digest). The hostname builds the server base URL (`https://<hostname>`) **and**
