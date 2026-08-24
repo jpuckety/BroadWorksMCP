@@ -40,9 +40,10 @@ import org.springframework.stereotype.Component;
  * {@code subject}); results are mapped to compact DTOs. No credentials or protocol bodies are
  * logged.</p>
  *
- * <p>When a client supports MCP elicitation, get/modify/create will pause and request any missing
- * required identifiers or create fields rather than failing immediately. Optional filters,
- * pagination, connection {@code resourceId}, and contact/address fields are never elicited.</p>
+ * <p>When a client supports MCP elicitation, get/modify/create/delete will pause and request any
+ * missing required identifiers or create fields rather than failing immediately. Optional filters,
+ * pagination, connection {@code resourceId}, contact/address fields, and the delete
+ * {@code areYouSure} flag are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -487,6 +488,63 @@ public class GroupTools {
             log.warn("tool broadworks_create_group failed for serviceProviderId={} groupId={}: {}",
                     spId, grpId, ex.getMessage());
             throw new AlpacaException("Group created but could not be read back: " + spId + "/" + grpId, ex);
+        }
+    }
+
+    String deleteGroup(String serviceProviderId, String groupId, Boolean areYouSure, String resourceId) {
+        return deleteGroup(serviceProviderId, groupId, areYouSure, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_delete_group",
+            description = "Delete a BroadWorks group within a service provider. This mutates live "
+                    + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the group "
+                    + "still contains users. This is a two-step operation: first call without areYouSure "
+                    + "(or with areYouSure=false) to receive a confirmation prompt; then call again with "
+                    + "areYouSure=true to proceed. "
+                    + "If serviceProviderId or groupId is omitted and the client supports elicitation, the "
+                    + "server will request them. Returns a short confirmation message.")
+    public String deleteGroup(
+            @McpToolParam(required = false,
+                    description = "The service provider id that owns the group")
+            String serviceProviderId,
+            @McpToolParam(required = false, description = "The id of the group to delete")
+            String groupId,
+            @McpToolParam(required = false,
+                    description = "Must be true to actually delete. Call first without this (or with false) "
+                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+            Boolean areYouSure,
+            @McpToolParam(required = false,
+                    description = "Optional BroadWorks resource id when multiple connections are configured")
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final ToolElicitation.GroupRef ref =
+                ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
+        final String spId = require(ref.serviceProviderId(), "serviceProviderId");
+        final String grpId = require(ref.groupId(), "groupId");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete group '" + spId + "/" + grpId + "'");
+        log.debug("tool broadworks_delete_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
+                spId, grpId, resourceId);
+        final BroadWorksServer server = connect(resourceId);
+        try {
+            final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
+            final Group group = Group.getPopulatedGroup(serviceProvider, grpId);
+            final Group.GroupDeleteRequest request = new Group.GroupDeleteRequest(group);
+            final DefaultResponse response = request.fire();
+            AlpacaRequests.ensureSuccess(response, "delete group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
+            log.debug("tool broadworks_delete_group succeeded (serviceProviderId={}, groupId={})",
+                    spId, grpId);
+            return "Deleted group '" + grpId + "' from service provider " + spId;
+        } catch (AlpacaException ex) {
+            log.warn("tool broadworks_delete_group failed: {}", ex.getMessage());
+            throw ex;
+        } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_delete_group failed for serviceProviderId={} groupId={}: {}",
+                    spId, grpId, ex.getMessage());
+            throw new AlpacaException("Group not found or not accessible: " + spId + "/" + grpId, ex);
+        } catch (RuntimeException ex) {
+            log.warn("tool broadworks_delete_group failed unexpectedly: {}", ex.getMessage());
+            throw new AlpacaException("Failed to delete group " + spId + "/" + grpId, ex);
         }
     }
 

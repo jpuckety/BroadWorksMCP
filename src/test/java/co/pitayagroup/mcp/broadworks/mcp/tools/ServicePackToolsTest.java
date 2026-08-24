@@ -461,11 +461,23 @@ class ServicePackToolsTest {
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
             statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
 
-            final String result = tools.deleteServicePack("sp-1", "Gold", null);
+            final String result = tools.deleteServicePack("sp-1", "Gold", true, null);
 
             assertThat(mocked.constructed()).hasSize(1);
             assertThat(result).contains("Gold").contains("sp-1");
         }
+    }
+
+    @Test
+    void deleteServicePackRequiresAreYouSure() {
+        assertThatThrownBy(() -> tools.deleteServicePack("sp-1", "Gold", null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure")
+                .hasMessageContaining("areYouSure=true");
+        assertThatThrownBy(() -> tools.deleteServicePack("sp-1", "Gold", false, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure");
+        verify(connectionFactory, never()).connect(any(), any());
     }
 
     @Test
@@ -483,7 +495,7 @@ class ServicePackToolsTest {
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
             statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
 
-            assertThatThrownBy(() -> tools.deleteServicePack("sp-1", "Gold", null))
+            assertThatThrownBy(() -> tools.deleteServicePack("sp-1", "Gold", true, null))
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("delete service pack");
         }

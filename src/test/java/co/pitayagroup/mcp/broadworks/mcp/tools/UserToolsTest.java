@@ -680,4 +680,58 @@ class UserToolsTest {
                 .hasMessage("userId is required");
         verify(connectionFactory, never()).connect(any(), any());
     }
+
+    @Test
+    void deleteUserReturnsConfirmation() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserDeleteRequest> mocked =
+                     mockConstruction(User.UserDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-1@example.com"))).thenReturn(user);
+
+            final String result = tools.deleteUser("user-1@example.com", true, null);
+
+            assertThat(mocked.constructed()).hasSize(1);
+            assertThat(result).contains("user-1@example.com");
+        }
+    }
+
+    @Test
+    void deleteUserRequiresAreYouSure() {
+        assertThatThrownBy(() -> tools.deleteUser("user-1@example.com", null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure")
+                .hasMessageContaining("areYouSure=true");
+        assertThatThrownBy(() -> tools.deleteUser("user-1@example.com", false, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure");
+        verify(connectionFactory, never()).connect(any(), any());
+    }
+
+    @Test
+    void deleteUserThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4008");
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserDeleteRequest> ignored =
+                     mockConstruction(User.UserDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-1@example.com"))).thenReturn(user);
+
+            assertThatThrownBy(() -> tools.deleteUser("user-1@example.com", true, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("delete user");
+        }
+    }
 }

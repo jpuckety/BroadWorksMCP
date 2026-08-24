@@ -726,4 +726,58 @@ class ServiceProviderToolsTest {
                 .isInstanceOf(AlpacaException.class)
                 .hasMessage("serviceProviderId, serviceProviderName and defaultDomain are required");
     }
+
+    @Test
+    void deleteServiceProviderReturnsConfirmation() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderDeleteRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            final String result = tools.deleteServiceProvider("sp-1", true, null);
+
+            assertThat(mocked.constructed()).hasSize(1);
+            assertThat(result).contains("sp-1");
+        }
+    }
+
+    @Test
+    void deleteServiceProviderRequiresAreYouSure() {
+        assertThatThrownBy(() -> tools.deleteServiceProvider("sp-1", null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure")
+                .hasMessageContaining("areYouSure=true");
+        assertThatThrownBy(() -> tools.deleteServiceProvider("sp-1", false, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure");
+        verify(connectionFactory, never()).connect(any(), any());
+    }
+
+    @Test
+    void deleteServiceProviderThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4008");
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderDeleteRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            assertThatThrownBy(() -> tools.deleteServiceProvider("sp-1", true, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("delete service provider");
+        }
+    }
 }

@@ -103,4 +103,18 @@ class ToolElicitationTest {
         assertThat(ToolElicitation.firstNonNull(5, 9)).isEqualTo(5);
         assertThat(ToolElicitation.firstNonNull(null, 9)).isEqualTo(9);
     }
+
+    @Test
+    void requireAreYouSureAcceptsOnlyTrue() {
+        ToolElicitation.requireAreYouSure(true, "delete service provider 'sp-1'");
+
+        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(null, "delete service provider 'sp-1'"))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure")
+                .hasMessageContaining("areYouSure=true")
+                .hasMessageContaining("No changes were made");
+        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(false, "delete user 'u-1'"))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("delete user 'u-1'");
+    }
 }

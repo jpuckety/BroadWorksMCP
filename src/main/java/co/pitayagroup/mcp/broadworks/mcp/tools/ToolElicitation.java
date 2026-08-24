@@ -37,6 +37,18 @@ final class ToolElicitation {
         return original != null ? original : elicited;
     }
 
+    /**
+     * Two-step delete gate: the caller must pass {@code areYouSure=true} before a destructive
+     * tool proceeds. {@code null} and {@code false} both refuse so an omitted flag is never treated
+     * as confirmation.
+     */
+    static void requireAreYouSure(Boolean areYouSure, String action) {
+        if (!Boolean.TRUE.equals(areYouSure)) {
+            throw new AlpacaException("Are you sure you want to " + action
+                    + "? Set areYouSure=true to confirm. No changes were made.");
+        }
+    }
+
     static <T> T elicit(McpSyncRequestContext requestContext, String message, Class<T> type,
             String declinedMessage) {
         log.info("Required fields missing, initiating elicitation");

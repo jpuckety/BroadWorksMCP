@@ -38,7 +38,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>When a client supports MCP elicitation, list/get/create/modify/delete will pause and request
  * any missing required identifiers rather than failing immediately. Optional connection
- * {@code resourceId}, quantity, services lists, description, and availability are never elicited.</p>
+ * {@code resourceId}, quantity, services lists, description, availability, and the delete
+ * {@code areYouSure} flag are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -323,14 +324,17 @@ public class ServicePackTools {
         }
     }
 
-    String deleteServicePack(String serviceProviderId, String servicePackName, String resourceId) {
-        return deleteServicePack(serviceProviderId, servicePackName, resourceId, null);
+    String deleteServicePack(String serviceProviderId, String servicePackName, Boolean areYouSure,
+            String resourceId) {
+        return deleteServicePack(serviceProviderId, servicePackName, areYouSure, resourceId, null);
     }
 
     @McpTool(name = "broadworks_delete_service_pack",
             description = "Delete a service pack from a BroadWorks service provider. This mutates live "
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the pack is still "
-                    + "authorized to groups or assigned to users. Returns a short confirmation message. "
+                    + "authorized to groups or assigned to users. This is a two-step operation: first call "
+                    + "without areYouSure (or with areYouSure=false) to receive a confirmation prompt; then "
+                    + "call again with areYouSure=true to proceed. Returns a short confirmation message. "
                     + "If serviceProviderId or servicePackName is omitted and the client supports elicitation, "
                     + "the server will request them.")
     public String deleteServicePack(
@@ -340,6 +344,10 @@ public class ServicePackTools {
             @McpToolParam(required = false, description = "The name of the service pack to delete")
             String servicePackName,
             @McpToolParam(required = false,
+                    description = "Must be true to actually delete. Call first without this (or with false) "
+                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+            Boolean areYouSure,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
             McpSyncRequestContext requestContext) {
@@ -347,6 +355,8 @@ public class ServicePackTools {
                 ToolElicitation.resolveServicePackRef(serviceProviderId, servicePackName, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String packName = require(ref.servicePackName(), "servicePackName");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete service pack '" + packName
+                + "' from service provider " + spId);
         log.debug("tool broadworks_delete_service_pack invoked (serviceProviderId={}, servicePackName={}, "
                 + "resourceId={})", spId, packName, resourceId);
         final BroadWorksServer server = connect(resourceId);

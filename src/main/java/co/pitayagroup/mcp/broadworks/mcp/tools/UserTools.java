@@ -45,9 +45,10 @@ import org.springframework.stereotype.Component;
  * {@code subject}); results are mapped to compact DTOs. No credentials or protocol bodies are
  * logged.</p>
  *
- * <p>When a client supports MCP elicitation, get/modify/create will pause and request any missing
- * required identifiers or create fields rather than failing immediately. Optional filters,
- * pagination, connection {@code resourceId}, contact/address fields, and passwords are never elicited.</p>
+ * <p>When a client supports MCP elicitation, get/modify/create/delete will pause and request any
+ * missing required identifiers or create fields rather than failing immediately. Optional filters,
+ * pagination, connection {@code resourceId}, contact/address fields, passwords, and the delete
+ * {@code areYouSure} flag are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -630,6 +631,52 @@ public class UserTools {
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_create_user failed for userId={}: {}", uId, ex.getMessage());
             throw new AlpacaException("User created but could not be read back: " + uId, ex);
+        }
+    }
+
+    String deleteUser(String userId, Boolean areYouSure, String resourceId) {
+        return deleteUser(userId, areYouSure, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_delete_user",
+            description = "Delete a BroadWorks user by their (system-unique) user id. This mutates live "
+                    + "BroadWorks data and is irreversible. This is a two-step operation: first call without "
+                    + "areYouSure (or with areYouSure=false) to receive a confirmation prompt; then call again "
+                    + "with areYouSure=true to proceed. "
+                    + "If userId is omitted and the client supports elicitation, the server will request it. "
+                    + "Returns a short confirmation message.")
+    public String deleteUser(
+            @McpToolParam(required = false, description = "The (system-unique) id of the user to delete")
+            String userId,
+            @McpToolParam(required = false,
+                    description = "Must be true to actually delete. Call first without this (or with false) "
+                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+            Boolean areYouSure,
+            @McpToolParam(required = false,
+                    description = "Optional BroadWorks resource id when multiple connections are configured")
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete user '" + uId + "'");
+        log.debug("tool broadworks_delete_user invoked (userId={}, resourceId={})", uId, resourceId);
+        final BroadWorksServer server = connect(resourceId);
+        try {
+            final User user = User.getPopulatedUser(server, uId);
+            final User.UserDeleteRequest request = new User.UserDeleteRequest(user);
+            final DefaultResponse response = request.fire();
+            AlpacaRequests.ensureSuccess(response, "delete user " + uId);
+            AlpacaRequests.flushResponseCache(server);
+            log.debug("tool broadworks_delete_user succeeded (userId={})", uId);
+            return "Deleted user '" + uId + "'";
+        } catch (AlpacaException ex) {
+            log.warn("tool broadworks_delete_user failed: {}", ex.getMessage());
+            throw ex;
+        } catch (BroadWorksObjectException ex) {
+            log.warn("tool broadworks_delete_user failed for userId={}: {}", uId, ex.getMessage());
+            throw new AlpacaException("User not found or not accessible: " + uId, ex);
+        } catch (RuntimeException ex) {
+            log.warn("tool broadworks_delete_user failed unexpectedly: {}", ex.getMessage());
+            throw new AlpacaException("Failed to delete user " + uId, ex);
         }
     }
 

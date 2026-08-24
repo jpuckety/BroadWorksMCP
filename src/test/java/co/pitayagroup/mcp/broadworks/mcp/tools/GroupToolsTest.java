@@ -650,4 +650,61 @@ class GroupToolsTest {
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("is required");
     }
+
+    @Test
+    void deleteGroupReturnsConfirmation() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedConstruction<ServiceProvider> ignored = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupDeleteRequest> mocked =
+                     mockConstruction(Group.GroupDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-1"))).thenReturn(group);
+
+            final String result = tools.deleteGroup("sp-1", "grp-1", true, null);
+
+            assertThat(mocked.constructed()).hasSize(1);
+            assertThat(result).contains("grp-1").contains("sp-1");
+        }
+    }
+
+    @Test
+    void deleteGroupRequiresAreYouSure() {
+        assertThatThrownBy(() -> tools.deleteGroup("sp-1", "grp-1", null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure")
+                .hasMessageContaining("areYouSure=true");
+        assertThatThrownBy(() -> tools.deleteGroup("sp-1", "grp-1", false, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("Are you sure");
+        verify(connectionFactory, never()).connect(any(), any());
+    }
+
+    @Test
+    void deleteGroupThrowsOnErrorResponse() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(true);
+        when(response.getErrorCode()).thenReturn("4008");
+
+        try (MockedConstruction<ServiceProvider> ignored = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupDeleteRequest> deleteCtor =
+                     mockConstruction(Group.GroupDeleteRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-1"))).thenReturn(group);
+
+            assertThatThrownBy(() -> tools.deleteGroup("sp-1", "grp-1", true, null))
+                    .isInstanceOf(AlpacaException.class)
+                    .hasMessageContaining("delete group");
+            assertThat(deleteCtor.constructed()).hasSize(1);
+        }
+    }
 }
