@@ -11,8 +11,8 @@
 # jakarta classpath. Any runtime companions the toolkit genuinely needs are
 # declared explicitly in the project pom.xml.
 #
-# NOTE: alpaca-server-*.jar (the full Spring Boot 2.7 application) is kept in
-# lib/ for reference ONLY and is intentionally NOT installed.
+# NOTE: Do not add alpaca-server-*.jar: Inspector flags its embedded test-scoped
+# Log4j POM, and the full Spring Boot 2.7 application is not used.
 #
 # Usage:
 #   ./scripts/install-alpaca.sh

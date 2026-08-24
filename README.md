@@ -60,7 +60,6 @@ MCP client ──bearer──▶ Resource Server (local opaque introspection) �
   - `alpaca-model-12.2.0-RELEASE.jar`
   - `alpaca-core-12.2.0-RELEASE-26.jar`
   - `alpaca-library-12.2.0-RELEASE-26.jar`
-  - (`alpaca-server-…jar` is kept for reference only and is **not** placed on the classpath.)
 - For deployment: **Node 18+**, **AWS CDK v2**, and AWS credentials.
 
 ---

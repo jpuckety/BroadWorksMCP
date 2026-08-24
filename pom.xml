@@ -309,9 +309,11 @@
             so it satisfies the toolkit's javax lookup while Hibernate Validator 9 stays on the classpath
             for the jakarta namespace. The two providers live in different namespaces and coexist without
             clashing. BVal also needs an EL 3.0 implementation for constraint-message interpolation; the
-            classpath only has the jakarta EL (tomcat-embed-el), so the javax EL implementation
-            (glassfish javax.el) is added below. BVal's own copy of the javax API is excluded to avoid
-            duplicating the validation-api 2.0.1 already declared above.
+            classpath only has the jakarta EL (tomcat-embed-el), so we add org.glassfish:jakarta.el:3.0.4
+            below. This version still provides the javax.el.* classes required by BVal 2.0.6 message
+            interpolation and must NOT be upgraded to 4.x/5.x, which move to the jakarta.el.* namespace
+            and would break BVal. BVal's own copy of the javax API is excluded to avoid duplicating the
+            validation-api 2.0.1 already declared above.
         -->
         <dependency>
             <groupId>org.apache.bval</groupId>
@@ -326,8 +328,8 @@
         </dependency>
         <dependency>
             <groupId>org.glassfish</groupId>
-            <artifactId>javax.el</artifactId>
-            <version>3.0.0</version>
+            <artifactId>jakarta.el</artifactId>
+            <version>3.0.4</version>
         </dependency>
 
         <!--
