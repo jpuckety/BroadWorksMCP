@@ -484,3 +484,16 @@ pattern.
   stub factory and never contact BroadWorks.
 - **Security**: PKCE (S256) is mandatory; DCR issues public clients only; secrets are KMS-encrypted
   at rest; tokens, passwords, and protocol bodies are never logged.
+
+---
+
+## License
+
+Copyright 2026 Pitaya Group, LLC
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+The Alpaca toolkit JARs under `lib/` (`alpaca-*.jar`, `ecg-licensing-*.jar`) are proprietary
+software of ECG, Inc. and are **not** licensed under Apache-2.0. See [NOTICE](NOTICE). Use of
+those libraries requires a purchased Alpaca license key from ECG, Inc. Do not publish
+`alpaca-license.txt` or `ALPACA_LICENSE_KEY`.

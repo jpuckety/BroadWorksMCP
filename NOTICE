@@ -1,0 +1,25 @@
+broadworks-mcp
+Copyright 2026 Pitaya Group, LLC
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+---------------------------------------------------------------------------
+Third-party components NOT licensed under Apache-2.0
+---------------------------------------------------------------------------
+
+The following files in the lib/ directory are proprietary software of
+ECG, Inc. They are NOT licensed under the Apache License 2.0. They are
+included solely so this project can interoperate with the Alpaca toolkit.
+Redistribution of these files is permitted only to the extent allowed by
+ECG, Inc.
+
+  - lib/alpaca-commons-12.2.0-RELEASE.jar
+  - lib/alpaca-core-12.2.0-RELEASE-26.jar
+  - lib/alpaca-library-12.2.0-RELEASE-26.jar
+  - lib/alpaca-model-12.2.0-RELEASE.jar
+  - lib/ecg-licensing-6.2.0-RELEASE.jar
+
+Use of the Alpaca libraries requires a purchased Alpaca License key from
+ECG, Inc. Contact jpuckett@e-c-group.com for pricing and information.
+
