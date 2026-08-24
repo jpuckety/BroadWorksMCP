@@ -32,6 +32,7 @@ import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
 import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools.CreateServiceProviderDetails;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServiceProviderId;
 
@@ -195,6 +196,57 @@ class ServiceProviderToolsTest {
                     "support@globex.example.com",
                     new ContactInfo("Jane Doe", "+1-555-0100", "jane@globex.example.com"),
                     new AddressInfo("1 Main St", "Suite 200", "Springfield", "IL", "62701", "US")));
+        }
+    }
+
+    @Test
+    void getServiceProviderRefreshFlushesResponseCache() {
+        final BroadWorksServer server = mock(BroadWorksServer.class);
+        when(server.clearCache()).thenReturn(true);
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(server);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getServiceProviderId()).thenReturn("sp-9");
+        when(sp.getServiceProviderName()).thenReturn("Globex");
+        when(sp.getDefaultDomain()).thenReturn("globex.example.com");
+        when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn(null);
+        when(sp.getContact()).thenReturn(null);
+        when(sp.getAddress()).thenReturn(null);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(eq(server), eq("sp-9")))
+                    .thenReturn(sp);
+
+            tools.getServiceProvider("sp-9", null, true, null);
+
+            verify(server).clearCache();
+        }
+    }
+
+    @Test
+    void getServiceProviderDoesNotFlushCacheWhenRefreshOmitted() {
+        final BroadWorksServer server = mock(BroadWorksServer.class);
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(server);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getServiceProviderId()).thenReturn("sp-9");
+        when(sp.getServiceProviderName()).thenReturn("Globex");
+        when(sp.getDefaultDomain()).thenReturn("globex.example.com");
+        when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn(null);
+        when(sp.getContact()).thenReturn(null);
+        when(sp.getAddress()).thenReturn(null);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(eq(server), eq("sp-9")))
+                    .thenReturn(sp);
+
+            tools.getServiceProvider("sp-9", null);
+
+            verify(server, never()).clearCache();
         }
     }
 

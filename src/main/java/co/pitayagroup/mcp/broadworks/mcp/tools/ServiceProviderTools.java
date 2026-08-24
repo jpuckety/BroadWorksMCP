@@ -78,12 +78,17 @@ public class ServiceProviderTools {
             String searchMode,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            @McpToolParam(required = false,
+                    description = "When true, flush the Alpaca OCI response cache before listing so the "
+                            + "result is fetched live from BroadWorks rather than served from cache")
+            Boolean refresh) {
         log.debug("tool broadworks_list_service_providers invoked (cursor={}, limit={}, search={}, searchMode={}, "
-                        + "resourceId={})", cursor, limit, search, searchMode, resourceId);
+                        + "resourceId={}, refresh={})", cursor, limit, search, searchMode, resourceId, refresh);
         final int offset = Paging.decodeCursor(cursor);
         final int pageLimit = Paging.effectivePageLimit(limit, SERVICE_PROVIDER_SCHEMA.size());
         final BroadWorksServer server = connect(resourceId);
+        AlpacaRequests.refreshIfRequested(server, refresh);
         try {
             final ServiceProvider.ServiceProviderGetListRequest request =
                     new ServiceProvider.ServiceProviderGetListRequest(server);
@@ -132,26 +137,41 @@ public class ServiceProviderTools {
                 "broadworks_list_service_providers", "service providers");
     }
 
+    public Page listServiceProviders(String cursor, Integer limit, String search, String searchMode,
+            String resourceId) {
+        return listServiceProviders(cursor, limit, search, searchMode, resourceId, null);
+    }
+
     ServiceProviderDetail getServiceProvider(String serviceProviderId, String resourceId) {
-        return getServiceProvider(serviceProviderId, resourceId, null);
+        return getServiceProvider(serviceProviderId, resourceId, null, null);
+    }
+
+    public ServiceProviderDetail getServiceProvider(String serviceProviderId, String resourceId,
+            McpSyncRequestContext requestContext) {
+        return getServiceProvider(serviceProviderId, resourceId, null, requestContext);
     }
 
     @McpTool(name = "broadworks_get_service_provider",
             description = "Get details for a single BroadWorks service provider by id, including its "
                     + "support email, contact (name/number/email), and physical address. "
                     + "If serviceProviderId is omitted and the client supports elicitation, the server will "
-                    + "request it.")
+                    + "request it. Pass refresh=true to flush the OCI response cache first and fetch live data.")
     public ServiceProviderDetail getServiceProvider(
             @McpToolParam(required = false, description = "The service provider id") String serviceProviderId,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
+            @McpToolParam(required = false,
+                    description = "When true, flush the Alpaca OCI response cache before reading so the "
+                            + "result is fetched live from BroadWorks rather than served from cache")
+            Boolean refresh,
             McpSyncRequestContext requestContext) {
         final String spId = require(ToolElicitation.resolveServiceProviderId(serviceProviderId, requestContext),
                 "serviceProviderId");
-        log.debug("tool broadworks_get_service_provider invoked (serviceProviderId={}, resourceId={})",
-                spId, resourceId);
+        log.debug("tool broadworks_get_service_provider invoked (serviceProviderId={}, resourceId={}, refresh={})",
+                spId, resourceId, refresh);
         final BroadWorksServer server = connect(resourceId);
+        AlpacaRequests.refreshIfRequested(server, refresh);
         try {
             final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, spId);
             return toDetail(sp);
@@ -269,6 +289,7 @@ public class ServiceProviderTools {
 
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "modify service provider " + spId);
+            AlpacaRequests.flushResponseCache(server);
 
             final ServiceProvider updated = ServiceProvider.getPopulatedServiceProvider(server, spId);
             log.debug("tool broadworks_modify_service_provider succeeded (serviceProviderId={})", spId);
@@ -386,6 +407,7 @@ public class ServiceProviderTools {
 
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "create service provider " + spId);
+            AlpacaRequests.flushResponseCache(server);
 
             final ServiceProvider created = ServiceProvider.getPopulatedServiceProvider(server, spId);
             log.debug("tool broadworks_create_service_provider succeeded (serviceProviderId={})", spId);

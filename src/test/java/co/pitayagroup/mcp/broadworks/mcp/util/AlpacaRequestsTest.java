@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
 
 import co.ecg.alpaca.toolkit.messaging.response.Response;
+import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import org.junit.jupiter.api.Test;
 
 class AlpacaRequestsTest {
@@ -81,6 +84,33 @@ class AlpacaRequestsTest {
         assertThatThrownBy(() -> AlpacaRequests.ensureSuccess(response, "modify service provider vwave_sp"))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessage("BroadWorks failed to modify service provider vwave_sp (error code 4015)");
+    }
+
+    @Test
+    void flushResponseCacheReturnsFalseForNullServer() {
+        assertThat(AlpacaRequests.flushResponseCache(null)).isFalse();
+    }
+
+    @Test
+    void flushResponseCacheDelegatesToServer() {
+        final BroadWorksServer server = mock(BroadWorksServer.class);
+        when(server.clearCache()).thenReturn(true);
+
+        assertThat(AlpacaRequests.flushResponseCache(server)).isTrue();
+        verify(server).clearCache();
+    }
+
+    @Test
+    void refreshIfRequestedFlushesOnlyWhenTrue() {
+        final BroadWorksServer server = mock(BroadWorksServer.class);
+        when(server.clearCache()).thenReturn(true);
+
+        AlpacaRequests.refreshIfRequested(server, null);
+        AlpacaRequests.refreshIfRequested(server, false);
+        verify(server, never()).clearCache();
+
+        AlpacaRequests.refreshIfRequested(server, true);
+        verify(server).clearCache();
     }
 
     private static int countOccurrences(String haystack, String needle) {

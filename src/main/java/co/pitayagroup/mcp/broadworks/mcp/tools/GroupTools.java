@@ -167,7 +167,12 @@ public class GroupTools {
     }
 
     GroupDetail getGroup(String serviceProviderId, String groupId, String resourceId) {
-        return getGroup(serviceProviderId, groupId, resourceId, null);
+        return getGroup(serviceProviderId, groupId, resourceId, null, null);
+    }
+
+    public GroupDetail getGroup(String serviceProviderId, String groupId, String resourceId,
+            McpSyncRequestContext requestContext) {
+        return getGroup(serviceProviderId, groupId, resourceId, null, requestContext);
     }
 
     @McpTool(name = "broadworks_get_group",
@@ -175,20 +180,25 @@ public class GroupTools {
                     + "user count/limit, calling line id (name/number), time zone, location dialing code, "
                     + "contact (name/number/email), and physical address. "
                     + "If serviceProviderId or groupId is omitted and the client supports elicitation, the server will "
-                    + "request them.")
+                    + "request them. Pass refresh=true to flush the OCI response cache first and fetch live data.")
     public GroupDetail getGroup(
             @McpToolParam(required = false, description = "The service provider id") String serviceProviderId,
             @McpToolParam(required = false, description = "The group id") String groupId,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
+            @McpToolParam(required = false,
+                    description = "When true, flush the Alpaca OCI response cache before reading so the "
+                            + "result is fetched live from BroadWorks rather than served from cache")
+            Boolean refresh,
             McpSyncRequestContext requestContext) {
         final ToolElicitation.GroupRef ref = ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String grpId = require(ref.groupId(), "groupId");
-        log.debug("tool broadworks_get_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
-                spId, grpId, resourceId);
+        log.debug("tool broadworks_get_group invoked (serviceProviderId={}, groupId={}, resourceId={}, refresh={})",
+                spId, grpId, resourceId, refresh);
         final BroadWorksServer server = connect(resourceId);
+        AlpacaRequests.refreshIfRequested(server, refresh);
         try {
             final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
             final Group group = Group.getPopulatedGroup(serviceProvider, grpId);
@@ -337,6 +347,7 @@ public class GroupTools {
 
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "modify group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
 
             final Group updated = Group.getPopulatedGroup(serviceProvider, grpId);
             log.debug("tool broadworks_modify_group succeeded (serviceProviderId={}, groupId={})",
@@ -466,6 +477,7 @@ public class GroupTools {
 
             final Group.GroupConsolidatedAddResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "create group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
 
             final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
             final Group created = Group.getPopulatedGroup(serviceProvider, grpId);

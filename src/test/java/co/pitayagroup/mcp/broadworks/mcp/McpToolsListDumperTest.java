@@ -41,6 +41,7 @@ class McpToolsListDumperTest {
                 "broadworks_add_connection",
                 "broadworks_list_connections",
                 "broadworks_delete_connection",
+                "broadworks_flush_cache",
                 "broadworks_list_service_providers",
                 "broadworks_get_service_provider",
                 "broadworks_modify_service_provider",

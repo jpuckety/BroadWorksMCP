@@ -475,7 +475,9 @@ pattern.
   provisioned runtime (license file / license manager).
 - **Live BroadWorks connectivity** uses the Alpaca toolkit's `BroadWorksServer` login machinery and
   is **on by default** (`ALPACA_LIVE` / `broadworks.alpaca.live`, default `true`). Apache JCS
-  (`org.apache.jcs:jcs`) is a normal Maven dependency. The CDK stack injects `ALPACA_LICENSE_KEY`
+  (`org.apache.jcs:jcs`) is a normal Maven dependency. OCI get/list responses are cached there
+  (logged as `RESPONSE FROM cache`); mutating tools flush automatically after a successful write,
+  get tools accept `refresh=true`, and `broadworks_flush_cache` clears the cache on demand. The CDK stack injects `ALPACA_LICENSE_KEY`
   from SSM. You still need: (1) a stored BroadWorks connection for the user
   (`broadworks_add_connection`), (2) a valid license, and (3) network reachability to the BroadWorks
   OCI host/port. Unit/integration tests set `broadworks.alpaca.live=false` so they use a non-login

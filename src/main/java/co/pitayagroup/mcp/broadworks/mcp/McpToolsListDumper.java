@@ -2,6 +2,7 @@ package co.pitayagroup.mcp.broadworks.mcp;
 
 import java.lang.reflect.Method;
 
+import co.pitayagroup.mcp.broadworks.mcp.tools.CacheTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.DomainModelTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
@@ -50,6 +51,7 @@ public final class McpToolsListDumper {
 
     private static final Class<?>[] TOOL_CLASSES = {
             ConnectionTools.class,
+            CacheTools.class,
             ServiceProviderTools.class,
             GroupTools.class,
             UserTools.class,

@@ -299,23 +299,33 @@ public class UserTools {
     }
 
     UserDetail getUser(String userId, String resourceId) {
-        return getUser(userId, resourceId, null);
+        return getUser(userId, resourceId, null, null);
+    }
+
+    public UserDetail getUser(String userId, String resourceId, McpSyncRequestContext requestContext) {
+        return getUser(userId, resourceId, null, requestContext);
     }
 
     @McpTool(name = "broadworks_get_user",
             description = "Get details for a single BroadWorks user by their (system-unique) user id, including "
                     + "their group and service provider, name, phone number/extension, email, department, title, "
                     + "mobile number, time zone, language, calling line id (name/number), and physical address. "
-                    + "If userId is omitted and the client supports elicitation, the server will request it.")
+                    + "If userId is omitted and the client supports elicitation, the server will request it. "
+                    + "Pass refresh=true to flush the OCI response cache first and fetch live data.")
     public UserDetail getUser(
             @McpToolParam(required = false, description = "The (system-unique) user id") String userId,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
+            @McpToolParam(required = false,
+                    description = "When true, flush the Alpaca OCI response cache before reading so the "
+                            + "result is fetched live from BroadWorks rather than served from cache")
+            Boolean refresh,
             McpSyncRequestContext requestContext) {
         final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
-        log.debug("tool broadworks_get_user invoked (userId={}, resourceId={})", uId, resourceId);
+        log.debug("tool broadworks_get_user invoked (userId={}, resourceId={}, refresh={})", uId, resourceId, refresh);
         final BroadWorksServer server = connect(resourceId);
+        AlpacaRequests.refreshIfRequested(server, refresh);
         try {
             final User user = User.getPopulatedUser(server, uId);
             return toDetail(user);
@@ -464,6 +474,7 @@ public class UserTools {
 
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "modify user " + uId);
+            AlpacaRequests.flushResponseCache(server);
 
             final User updated = User.getPopulatedUser(server, uId);
             log.debug("tool broadworks_modify_user succeeded (userId={})", uId);
@@ -611,6 +622,7 @@ public class UserTools {
 
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "create user " + uId);
+            AlpacaRequests.flushResponseCache(server);
 
             final User created = User.getPopulatedUser(server, uId);
             log.debug("tool broadworks_create_user succeeded (userId={})", uId);

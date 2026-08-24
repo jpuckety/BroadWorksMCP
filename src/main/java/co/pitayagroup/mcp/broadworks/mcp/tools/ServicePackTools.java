@@ -93,7 +93,12 @@ public class ServicePackTools {
     }
 
     ServicePackDetail getServicePack(String serviceProviderId, String servicePackName, String resourceId) {
-        return getServicePack(serviceProviderId, servicePackName, resourceId, null);
+        return getServicePack(serviceProviderId, servicePackName, resourceId, null, null);
+    }
+
+    public ServicePackDetail getServicePack(String serviceProviderId, String servicePackName, String resourceId,
+            McpSyncRequestContext requestContext) {
+        return getServicePack(serviceProviderId, servicePackName, resourceId, null, requestContext);
     }
 
     @McpTool(name = "broadworks_get_service_pack",
@@ -101,7 +106,8 @@ public class ServicePackTools {
                     + "including its description, availability, licensed quantity, how many are assigned/allowed, "
                     + "and the user services included in the pack. "
                     + "If serviceProviderId or servicePackName is omitted and the client supports elicitation, "
-                    + "the server will request them.")
+                    + "the server will request them. Pass refresh=true to flush the OCI response cache first "
+                    + "and fetch live data.")
     public ServicePackDetail getServicePack(
             @McpToolParam(required = false,
                     description = "The service provider id that owns the service pack")
@@ -111,14 +117,19 @@ public class ServicePackTools {
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
+            @McpToolParam(required = false,
+                    description = "When true, flush the Alpaca OCI response cache before reading so the "
+                            + "result is fetched live from BroadWorks rather than served from cache")
+            Boolean refresh,
             McpSyncRequestContext requestContext) {
         final ToolElicitation.ServicePackRef ref =
                 ToolElicitation.resolveServicePackRef(serviceProviderId, servicePackName, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String packName = require(ref.servicePackName(), "servicePackName");
         log.debug("tool broadworks_get_service_pack invoked (serviceProviderId={}, servicePackName={}, "
-                + "resourceId={})", spId, packName, resourceId);
+                + "resourceId={}, refresh={})", spId, packName, resourceId, refresh);
         final BroadWorksServer server = connect(resourceId);
+        AlpacaRequests.refreshIfRequested(server, refresh);
         final ServiceProvider sp = populatedServiceProvider(server, spId);
         return getDetail(sp, spId, packName);
     }
@@ -195,6 +206,7 @@ public class ServicePackTools {
             }
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "create service pack " + packName);
+            AlpacaRequests.flushResponseCache(server);
 
             log.debug("tool broadworks_create_service_pack succeeded (serviceProviderId={}, servicePackName={})",
                     spId, packName);
@@ -298,6 +310,7 @@ public class ServicePackTools {
 
             // The name may have changed; read back under the effective (possibly new) name.
             final String effectiveName = isPresent(newServicePackName) ? newServicePackName.trim() : packName;
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_modify_service_pack succeeded (serviceProviderId={}, servicePackName={})",
                     spId, effectiveName);
             return getDetail(sp, spId, effectiveName);
@@ -343,6 +356,7 @@ public class ServicePackTools {
                     new ServiceProvider.ServiceProviderServicePackDeleteRequest(sp, packName);
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "delete service pack " + packName);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_delete_service_pack succeeded (serviceProviderId={}, servicePackName={})",
                     spId, packName);
             return "Deleted service pack '" + packName + "' from service provider " + spId;

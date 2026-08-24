@@ -35,6 +35,7 @@ accepted by, returned from, or logged by any tool.
 | [`broadworks_list_connections`](#broadworks_list_connections) | List the caller's stored BroadWorks connections. | `array` of `ConnectionSummary` |
 | [`broadworks_add_connection`](#broadworks_add_connection) | Add or replace a BroadWorks connection (password-less). | `ConnectionSummary` |
 | [`broadworks_delete_connection`](#broadworks_delete_connection) | Delete a stored connection. | `string` |
+| [`broadworks_flush_cache`](#broadworks_flush_cache) | Flush the Alpaca OCI response cache for the current connection. | `CacheFlushResult` |
 | [`broadworks_list_service_providers`](#broadworks_list_service_providers) | List / search service providers and enterprises. | `Page` |
 | [`broadworks_get_service_provider`](#broadworks_get_service_provider) | Get a single service provider by id. | `ServiceProviderDetail` |
 | [`broadworks_list_groups`](#broadworks_list_groups) | List / search groups (per service provider or system-wide). | `Page` |
@@ -106,6 +107,21 @@ Delete a BroadWorks server connection owned by the authenticated user.
 
 ---
 
+### `broadworks_flush_cache`
+
+Flush the Alpaca OCI response cache for the current BroadWorks connection so the next get/list
+calls BroadWorks live instead of returning a cached response. Mutating tools already flush
+automatically after a successful write. Get tools also accept `refresh=true` to flush immediately
+before that read.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+
+**Returns:** a [`CacheFlushResult`](#cacheflushresult) object.
+
+---
+
 ## Service provider tools
 
 ### `broadworks_list_service_providers`
@@ -120,6 +136,7 @@ user. Results are paginated and capped server-side.
 | `search` | `string` | optional | Case-insensitive filter matched against the service provider name; omit to list all. |
 | `searchMode` | `string` | optional | How the search value is matched: `STARTSWITH`, `CONTAINS`, or `EQUALTO` (default `CONTAINS`). Ignored when `search` is omitted. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+| `refresh` | `boolean` | optional | When `true`, flush the Alpaca OCI response cache before listing so the result is fetched live from BroadWorks. |
 
 **Returns:** a [`Page`](#the-page-envelope) whose rows follow the schema
 `["serviceProviderId", "serviceProviderName", "enterprise", "resellerId"]`:
@@ -141,6 +158,7 @@ Get details for a single BroadWorks service provider by id.
 |---|---|---|---|
 | `serviceProviderId` | `string` | required | The service provider id. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+| `refresh` | `boolean` | optional | When `true`, flush the Alpaca OCI response cache before reading so the result is fetched live from BroadWorks. |
 
 **Returns:** a [`ServiceProviderDetail`](#serviceproviderdetail) object.
 
@@ -183,6 +201,7 @@ Get details for a single BroadWorks group within a service provider.
 | `serviceProviderId` | `string` | required | The service provider id. |
 | `groupId` | `string` | required | The group id. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+| `refresh` | `boolean` | optional | When `true`, flush the Alpaca OCI response cache before reading so the result is fetched live from BroadWorks. |
 
 **Returns:** a [`GroupDetail`](#groupdetail) object.
 
@@ -237,6 +256,7 @@ Get details for a single BroadWorks user by their (system-unique) user id.
 |---|---|---|---|
 | `userId` | `string` | required | The (system-unique) user id. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
+| `refresh` | `boolean` | optional | When `true`, flush the Alpaca OCI response cache before reading so the result is fetched live from BroadWorks. |
 
 **Returns:** a [`UserDetail`](#userdetail) object.
 
@@ -270,6 +290,7 @@ assigned/allowed quantities, and included user services.
 |---|---|---|---|
 | `serviceProviderId` | `string` | required | The service provider id that owns the service pack. |
 | `servicePackName` | `string` | required | The name of the service pack to inspect. |
+| `refresh` | `boolean` | optional | When `true`, flush the Alpaca OCI response cache before reading so the result is fetched live from BroadWorks. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
 
 **Returns:** a [`ServicePackDetail`](#servicepackdetail) object.
@@ -490,6 +511,15 @@ At least one service name or service pack name is required.
 ---
 
 ## Return schemas
+
+### `CacheFlushResult`
+
+Outcome of `broadworks_flush_cache`.
+
+| Field | Type | Description |
+|---|---|---|
+| `flushed` | `boolean` | Whether the cache was actually cleared. |
+| `message` | `string` | A short, agent-facing summary of the outcome. |
 
 ### `ConnectionSummary`
 

@@ -149,6 +149,7 @@ public class ServiceTools {
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response,
                     "modify service authorization for service provider " + spId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_modify_service_provider_service_authorization succeeded "
                     + "(serviceProviderId={})", spId);
             return readServiceProviderAuthorization(sp, spId);
@@ -265,6 +266,7 @@ public class ServiceTools {
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response,
                     "modify service authorization for group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_modify_group_service_authorization succeeded "
                     + "(serviceProviderId={}, groupId={})", spId, grpId);
             return readGroupAuthorization(group, spId, grpId);
@@ -317,6 +319,7 @@ public class ServiceTools {
             request.setServiceName(services);
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "assign group services to group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_assign_group_services succeeded (serviceProviderId={}, groupId={})",
                     spId, grpId);
             return displayNames(services);
@@ -367,6 +370,7 @@ public class ServiceTools {
             request.setServiceName(services);
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "unassign group services from group " + spId + "/" + grpId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_unassign_group_services succeeded (serviceProviderId={}, groupId={})",
                     spId, grpId);
             return displayNames(services);
@@ -449,6 +453,7 @@ public class ServiceTools {
             }
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "assign services to user " + uId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_assign_user_services succeeded (userId={})", uId);
             return readUserAssignedServices(server, user, uId);
         } catch (AlpacaException ex) {
@@ -505,6 +510,7 @@ public class ServiceTools {
             }
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "unassign services from user " + uId);
+            AlpacaRequests.flushResponseCache(server);
             log.debug("tool broadworks_unassign_user_services succeeded (userId={})", uId);
             return readUserAssignedServices(server, user, uId);
         } catch (AlpacaException ex) {
