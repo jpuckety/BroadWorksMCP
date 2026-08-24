@@ -1,6 +1,7 @@
 package co.pitayagroup.mcp.broadworks.mcp;
 
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
+import co.pitayagroup.mcp.broadworks.mcp.tools.DomainModelTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServicePackTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools;
@@ -106,7 +107,7 @@ public final class McpToolsListDumper {
         final MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
                 .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null),
                         new GroupTools(null), new UserTools(null), new ServicePackTools(null),
-                        new ServiceTools(null))
+                        new ServiceTools(null), new DomainModelTools())
                 .build();
 
         final ArrayNode tools = MAPPER.createArrayNode();

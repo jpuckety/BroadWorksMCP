@@ -1,6 +1,7 @@
 package co.pitayagroup.mcp.broadworks.config;
 
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
+import co.pitayagroup.mcp.broadworks.mcp.tools.DomainModelTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServicePackTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools;
@@ -32,10 +33,11 @@ public class McpToolConfig {
                                                                GroupTools groupTools,
                                                                UserTools userTools,
                                                                ServicePackTools servicePackTools,
-                                                               ServiceTools serviceTools) {
+                                                               ServiceTools serviceTools,
+                                                               DomainModelTools domainModelTools) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(connectionTools, serviceProviderTools, groupTools, userTools, servicePackTools,
-                        serviceTools)
+                        serviceTools, domainModelTools)
                 .build();
     }
 }

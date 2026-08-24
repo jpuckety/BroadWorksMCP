@@ -28,6 +28,31 @@ spring:
         protocol: STATELESS
         # stdio is disabled here and enabled only by the `stdio` profile.
         stdio: false
+        instructions: |
+          BroadWorks object model (read this first):
+
+          Hierarchy
+          System → Service Provider / Enterprise → Group → User
+          - Service Provider (or Enterprise) owns Groups and Service Packs.
+          - Groups contain Users and are the primary unit for most service assignment and day-to-day provisioning.
+          - Users are the leaf nodes (individual lines/subscribers).
+
+          Access Devices
+          - Groups may also contain Access Devices (phones, soft clients, ATA, etc.).
+          - An Access Device can be associated with one or more Users.
+          - A User can be associated with one or more Access Devices.
+          - Device assignment and Identity/Device Profile management typically occur at the Group or User level.
+
+          Services & Licensing
+          - Service Packs are named bundles of User Services defined on the Service Provider.
+          - Authorization flows downward: Service Provider → Group → User (or Service Pack).
+          - Prefer assigning features via Service Packs rather than individual services when possible.
+          - “Authorized” ≠ “Assigned”. A service/pack must be authorized before it can be assigned.
+
+          Common patterns
+          - Most read/write operations are scoped by serviceProviderId + groupId (or just userId for user-level calls).
+          - Enterprises and Service Providers are similar at the top level; the isEnterprise flag distinguishes them.
+          - Always confirm the correct scope (SP vs Group vs User) before modifying data.
 
 server:
   port: 8080

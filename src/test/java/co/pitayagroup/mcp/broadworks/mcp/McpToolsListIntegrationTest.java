@@ -62,6 +62,13 @@ class McpToolsListIntegrationTest {
         assertThat(init.statusCode()).isEqualTo(200);
         // STATELESS transport mints no session id; there is no Mcp-Session-Id header to thread through.
         assertThat(init.headers().firstValue("mcp-session-id")).isEmpty();
+        assertThat(init.body())
+                .contains("BroadWorks object model (read this first):")
+                .contains("System → Service Provider / Enterprise → Group → User")
+                .contains("Authorized")
+                .contains("Assigned")
+                .contains("serviceProviderId")
+                .contains("isEnterprise");
 
         final HttpResponse<String> list = client.send(
                 HttpRequest.newBuilder(URI.create(base))
@@ -106,6 +113,25 @@ class McpToolsListIntegrationTest {
                 .contains("broadworks_unassign_group_services")
                 .contains("broadworks_get_user_assigned_services")
                 .contains("broadworks_assign_user_services")
-                .contains("broadworks_unassign_user_services");
+                .contains("broadworks_unassign_user_services")
+                .contains("broadworks_get_domain_model");
+
+        final HttpResponse<String> call = client.send(
+                HttpRequest.newBuilder(URI.create(base))
+                        .header("Authorization", "Bearer tok-mcp")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .POST(HttpRequest.BodyPublishers.ofString(
+                                "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{"
+                                        + "\"name\":\"broadworks_get_domain_model\",\"arguments\":{}}}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(call.statusCode()).isEqualTo(200);
+        assertThat(call.body())
+                .contains("Access Device")
+                .contains("many-to-many")
+                .contains("Authorized")
+                .contains("serviceProviderId");
     }
 }

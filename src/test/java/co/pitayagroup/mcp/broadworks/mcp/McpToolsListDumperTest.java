@@ -66,7 +66,8 @@ class McpToolsListDumperTest {
                 "broadworks_unassign_group_services",
                 "broadworks_get_user_assigned_services",
                 "broadworks_assign_user_services",
-                "broadworks_unassign_user_services");
+                "broadworks_unassign_user_services",
+                "broadworks_get_domain_model");
     }
 
     @Test
