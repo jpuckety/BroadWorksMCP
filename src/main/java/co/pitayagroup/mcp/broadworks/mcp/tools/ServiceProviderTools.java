@@ -201,7 +201,8 @@ public class ServiceProviderTools {
                     + "an empty string to clear the current value. serviceProviderName and defaultDomain cannot "
                     + "be cleared and are only changed when a non-blank value is supplied. "
                     + "If serviceProviderId is omitted and the client supports elicitation, the server will "
-                    + "request it. Returns the refreshed service provider detail reflecting the applied state.")
+                    + "request it. Returns the refreshed service provider detail reflecting the applied state.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public ServiceProviderDetail modifyServiceProvider(
             @McpToolParam(required = false, description = "The id of the service provider to modify")
             String serviceProviderId,
@@ -429,9 +430,11 @@ public class ServiceProviderTools {
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the "
                     + "service provider still contains groups. This is a two-step operation: first call "
                     + "without areYouSure (or with areYouSure=false) to receive a confirmation prompt; "
-                    + "then call again with areYouSure=true to proceed. "
+                    + "then call again with areYouSure=true to proceed. If the client supports elicitation, "
+                    + "confirmation is requested in-band instead of requiring a second call. "
                     + "If serviceProviderId is omitted and the client supports elicitation, the server will "
-                    + "request it. Returns a short confirmation message.")
+                    + "request it. Returns a short confirmation message.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteServiceProvider(
             @McpToolParam(required = false, description = "The id of the service provider to delete")
             String serviceProviderId,
@@ -445,7 +448,8 @@ public class ServiceProviderTools {
             McpSyncRequestContext requestContext) {
         final String spId = require(ToolElicitation.resolveServiceProviderId(serviceProviderId, requestContext),
                 "serviceProviderId");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete service provider '" + spId + "'");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete service provider '" + spId + "'",
+                requestContext);
         log.debug("tool broadworks_delete_service_provider invoked (serviceProviderId={}, resourceId={})",
                 spId, resourceId);
         final BroadWorksServer server = connect(resourceId);

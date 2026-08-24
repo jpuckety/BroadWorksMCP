@@ -358,7 +358,8 @@ public class UserTools {
                     + "callingLineIdFirstName and callingLineIdLastName cannot be cleared and are only changed "
                     + "when a non-blank value is supplied. Passwords are intentionally not editable through this "
                     + "tool. If userId is omitted and the client supports elicitation, the server will request it. "
-                    + "Returns the refreshed user detail reflecting the applied state.")
+                    + "Returns the refreshed user detail reflecting the applied state.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public UserDetail modifyUser(
             @McpToolParam(required = false, description = "The (system-unique) id of the user to modify")
             String userId,
@@ -642,9 +643,11 @@ public class UserTools {
             description = "Delete a BroadWorks user by their (system-unique) user id. This mutates live "
                     + "BroadWorks data and is irreversible. This is a two-step operation: first call without "
                     + "areYouSure (or with areYouSure=false) to receive a confirmation prompt; then call again "
-                    + "with areYouSure=true to proceed. "
+                    + "with areYouSure=true to proceed. If the client supports elicitation, confirmation is "
+                    + "requested in-band instead of requiring a second call. "
                     + "If userId is omitted and the client supports elicitation, the server will request it. "
-                    + "Returns a short confirmation message.")
+                    + "Returns a short confirmation message.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteUser(
             @McpToolParam(required = false, description = "The (system-unique) id of the user to delete")
             String userId,
@@ -657,7 +660,7 @@ public class UserTools {
             String resourceId,
             McpSyncRequestContext requestContext) {
         final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete user '" + uId + "'");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete user '" + uId + "'", requestContext);
         log.debug("tool broadworks_delete_user invoked (userId={}, resourceId={})", uId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {

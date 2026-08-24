@@ -239,7 +239,8 @@ public class ServicePackTools {
                     + "to remove a service you must delete and recreate the pack. Returns the refreshed service pack "
                     + "detail. "
                     + "If serviceProviderId or servicePackName is omitted and the client supports elicitation, "
-                    + "the server will request them.")
+                    + "the server will request them.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public ServicePackDetail modifyServicePack(
             @McpToolParam(required = false,
                     description = "The service provider id that owns the service pack")
@@ -334,9 +335,12 @@ public class ServicePackTools {
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the pack is still "
                     + "authorized to groups or assigned to users. This is a two-step operation: first call "
                     + "without areYouSure (or with areYouSure=false) to receive a confirmation prompt; then "
-                    + "call again with areYouSure=true to proceed. Returns a short confirmation message. "
+                    + "call again with areYouSure=true to proceed. If the client supports elicitation, "
+                    + "confirmation is requested in-band instead of requiring a second call. "
+                    + "Returns a short confirmation message. "
                     + "If serviceProviderId or servicePackName is omitted and the client supports elicitation, "
-                    + "the server will request them.")
+                    + "the server will request them.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteServicePack(
             @McpToolParam(required = false,
                     description = "The service provider id that owns the service pack")
@@ -356,7 +360,7 @@ public class ServicePackTools {
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String packName = require(ref.servicePackName(), "servicePackName");
         ToolElicitation.requireAreYouSure(areYouSure, "delete service pack '" + packName
-                + "' from service provider " + spId);
+                + "' from service provider " + spId, requestContext);
         log.debug("tool broadworks_delete_service_pack invoked (serviceProviderId={}, servicePackName={}, "
                 + "resourceId={})", spId, packName, resourceId);
         final BroadWorksServer server = connect(resourceId);

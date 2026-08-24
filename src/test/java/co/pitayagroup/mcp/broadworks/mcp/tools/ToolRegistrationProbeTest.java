@@ -3,6 +3,7 @@ package co.pitayagroup.mcp.broadworks.mcp.tools;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.mcp.annotation.McpTool;
@@ -71,5 +72,39 @@ class ToolRegistrationProbeTest {
                 "broadworks_assign_user_services",
                 "broadworks_unassign_user_services",
                 "broadworks_get_domain_model");
+    }
+
+    @Test
+    void deleteAndModifyToolsAdvertiseDestructiveHint() {
+        final Set<String> destructiveTools = Set.of(
+                "broadworks_delete_connection",
+                "broadworks_modify_service_provider",
+                "broadworks_delete_service_provider",
+                "broadworks_modify_group",
+                "broadworks_delete_group",
+                "broadworks_modify_user",
+                "broadworks_delete_user",
+                "broadworks_modify_service_pack",
+                "broadworks_delete_service_pack",
+                "broadworks_modify_service_provider_service_authorization",
+                "broadworks_modify_group_service_authorization");
+
+        final List<String> advertised = new ArrayList<>();
+        for (Class<?> type : TOOL_CLASSES) {
+            for (Method method : type.getDeclaredMethods()) {
+                final McpTool annotation = method.getAnnotation(McpTool.class);
+                if (annotation == null || annotation.name().isBlank()) {
+                    continue;
+                }
+                if (annotation.name().contains("_delete_") || annotation.name().contains("_modify_")) {
+                    advertised.add(annotation.name());
+                    assertThat(annotation.annotations().destructiveHint())
+                            .as("%s should advertise destructiveHint", annotation.name())
+                            .isTrue();
+                }
+            }
+        }
+
+        assertThat(advertised).containsExactlyInAnyOrderElementsOf(destructiveTools);
     }
 }

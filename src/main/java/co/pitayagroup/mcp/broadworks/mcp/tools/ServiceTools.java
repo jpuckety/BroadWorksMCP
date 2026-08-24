@@ -107,7 +107,8 @@ public class ServiceTools {
                     + "revoke (unauthorize) the service. Service names are BroadWorks display names (e.g. "
                     + "'Call Waiting'); an unknown name is rejected. Returns the refreshed authorization snapshot. "
                     + "If serviceProviderId is omitted and the client supports elicitation, the server will "
-                    + "request it.")
+                    + "request it.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public ServiceAuthorizationSet modifyServiceProviderServiceAuthorization(
             @McpToolParam(required = false,
                     description = "The service provider id whose authorization to change")
@@ -212,7 +213,8 @@ public class ServiceTools {
                     + "'Call Waiting'); service pack names are their defined names on the service provider. An "
                     + "unknown service name is rejected. Returns the refreshed authorization snapshot. "
                     + "If serviceProviderId or groupId is omitted and the client supports elicitation, the server "
-                    + "will request them.")
+                    + "will request them.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public ServiceAuthorizationSet modifyGroupServiceAuthorization(
             @McpToolParam(required = false,
                     description = "The service provider id that owns the group") String serviceProviderId,

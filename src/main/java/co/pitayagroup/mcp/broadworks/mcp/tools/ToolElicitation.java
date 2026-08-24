@@ -12,7 +12,8 @@ import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
  *
  * <p>Required identifier and create fields are advertised as optional on the tool schema so a
  * client that supports elicitation can be prompted instead of failing immediately. Already-supplied
- * values are kept. Optional filters, pagination, connection {@code resourceId}, passwords, and
+ * values are kept. The delete {@code areYouSure} confirmation is elicited the same way when the
+ * client supports it. Optional filters, pagination, connection {@code resourceId}, passwords, and
  * service lists are never elicited.</p>
  */
 @Slf4j
@@ -38,20 +39,36 @@ final class ToolElicitation {
     }
 
     /**
-     * Two-step delete gate: the caller must pass {@code areYouSure=true} before a destructive
-     * tool proceeds. {@code null} and {@code false} both refuse so an omitted flag is never treated
-     * as confirmation.
+     * Two-step delete gate: the caller must confirm before a destructive tool proceeds.
+     * {@code true} is accepted immediately. {@code null} and {@code false} both require
+     * confirmation so an omitted flag is never treated as consent. When the client supports
+     * elicitation the user is prompted in-band; otherwise the same refusal exception is thrown
+     * so a follow-up call with {@code areYouSure=true} can proceed.
      */
-    static void requireAreYouSure(Boolean areYouSure, String action) {
-        if (!Boolean.TRUE.equals(areYouSure)) {
-            throw new AlpacaException("Are you sure you want to " + action
-                    + "? Set areYouSure=true to confirm. No changes were made.");
+    static void requireAreYouSure(Boolean areYouSure, String action,
+            McpSyncRequestContext requestContext) {
+        if (Boolean.TRUE.equals(areYouSure)) {
+            return;
         }
+        if (canElicit(requestContext)) {
+            final AreYouSure elicited = elicit(requestContext,
+                    "Are you sure you want to " + action + "?",
+                    AreYouSure.class, refusalMessage(action));
+            if (Boolean.TRUE.equals(elicited.areYouSure())) {
+                return;
+            }
+        }
+        throw new AlpacaException(refusalMessage(action));
+    }
+
+    private static String refusalMessage(String action) {
+        return "Are you sure you want to " + action
+                + "? Set areYouSure=true to confirm. No changes were made.";
     }
 
     static <T> T elicit(McpSyncRequestContext requestContext, String message, Class<T> type,
             String declinedMessage) {
-        log.info("Required fields missing, initiating elicitation");
+        log.info("Initiating elicitation");
         final StructuredElicitResult<T> elicitResult = requestContext.elicit(e -> e.message(message), type);
         if (!ElicitResult.Action.ACCEPT.equals(elicitResult.action())
                 || elicitResult.structuredContent() == null) {
@@ -120,5 +137,8 @@ final class ToolElicitation {
     }
 
     record ServicePackRef(String serviceProviderId, String servicePackName) {
+    }
+
+    record AreYouSure(Boolean areYouSure) {
     }
 }

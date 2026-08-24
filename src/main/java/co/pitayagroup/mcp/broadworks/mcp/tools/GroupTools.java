@@ -233,7 +233,8 @@ public class GroupTools {
                     + "empty string to clear the current value. groupName, defaultDomain, timeZone and userLimit "
                     + "cannot be cleared and are only changed when a value is supplied. "
                     + "If serviceProviderId or groupId is omitted and the client supports elicitation, the server will "
-                    + "request them. Returns the refreshed group detail reflecting the applied state.")
+                    + "request them. Returns the refreshed group detail reflecting the applied state.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public GroupDetail modifyGroup(
             @McpToolParam(required = false, description = "The service provider id owning the group")
             String serviceProviderId,
@@ -500,9 +501,11 @@ public class GroupTools {
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the group "
                     + "still contains users. This is a two-step operation: first call without areYouSure "
                     + "(or with areYouSure=false) to receive a confirmation prompt; then call again with "
-                    + "areYouSure=true to proceed. "
+                    + "areYouSure=true to proceed. If the client supports elicitation, confirmation is "
+                    + "requested in-band instead of requiring a second call. "
                     + "If serviceProviderId or groupId is omitted and the client supports elicitation, the "
-                    + "server will request them. Returns a short confirmation message.")
+                    + "server will request them. Returns a short confirmation message.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteGroup(
             @McpToolParam(required = false,
                     description = "The service provider id that owns the group")
@@ -521,7 +524,8 @@ public class GroupTools {
                 ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String grpId = require(ref.groupId(), "groupId");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete group '" + spId + "/" + grpId + "'");
+        ToolElicitation.requireAreYouSure(areYouSure, "delete group '" + spId + "/" + grpId + "'",
+                requestContext);
         log.debug("tool broadworks_delete_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
                 spId, grpId, resourceId);
         final BroadWorksServer server = connect(resourceId);

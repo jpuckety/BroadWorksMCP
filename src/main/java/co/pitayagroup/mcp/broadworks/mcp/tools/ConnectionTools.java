@@ -162,7 +162,8 @@ public class ConnectionTools {
     @McpTool(name = "broadworks_delete_connection",
             description = "Delete a BroadWorks server connection owned by the authenticated user. "
                     + "If resourceId is omitted and the client supports elicitation, the server will "
-                    + "request it.")
+                    + "request it.",
+            annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteConnection(
             @McpToolParam(required = false, description = "The resource id of the connection to delete")
             String resourceId,

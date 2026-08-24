@@ -173,7 +173,9 @@ Delete a BroadWorks service provider (or enterprise). **Mutates live BroadWorks 
 irreversible.** BroadWorks may reject the deletion if the service provider still contains groups.
 
 This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-returns an "Are you sure?" error and makes no changes; call again with `areYouSure=true` to proceed.
+prompts for confirmation (via elicitation when the client supports it, otherwise as an
+"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
+does not complete elicitation.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -234,7 +236,9 @@ Delete a BroadWorks group within a service provider. **Mutates live BroadWorks d
 irreversible.** BroadWorks may reject the deletion if the group still contains users.
 
 This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-returns an "Are you sure?" error and makes no changes; call again with `areYouSure=true` to proceed.
+prompts for confirmation (via elicitation when the client supports it, otherwise as an
+"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
+does not complete elicitation.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -308,7 +312,9 @@ Delete a BroadWorks user by their (system-unique) user id. **Mutates live BroadW
 irreversible.**
 
 This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-returns an "Are you sure?" error and makes no changes; call again with `areYouSure=true` to proceed.
+prompts for confirmation (via elicitation when the client supports it, otherwise as an
+"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
+does not complete elicitation.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -406,7 +412,9 @@ Delete a service pack from a service provider. **Mutates live BroadWorks data an
 BroadWorks may reject the deletion if the pack is still authorized to groups or assigned to users.
 
 This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-returns an "Are you sure?" error and makes no changes; call again with `areYouSure=true` to proceed.
+prompts for confirmation (via elicitation when the client supports it, otherwise as an
+"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
+does not complete elicitation.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
