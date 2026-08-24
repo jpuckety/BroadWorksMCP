@@ -277,9 +277,13 @@ each must be resolvable from this context.
    `UserInfo{subject,email}` into the tool context. All per-tenant state is keyed by `subject`
    (never email).
 
-**Multi-instance:** With `STORAGE_BACKEND=DYNAMODB` and ECS `desiredCount ≥ 2` (no ALB stickiness),
-HTTP login sessions (own table), SAS authorizations/consents, and issued opaque-token sessions are
-all shared via DynamoDB, so authorize on task A and token exchange / refresh on task B succeeds.
+**OAuth is multi-instance; MCP is not.** With `STORAGE_BACKEND=DYNAMODB`, HTTP login sessions (own
+table), SAS authorizations/consents, and issued opaque-token sessions are shared via DynamoDB, so
+authorize on task A and token exchange / refresh on task B would succeed. The MCP STREAMABLE
+transport is different: `Mcp-Session-Id` state (including in-flight elicitation) lives in memory on
+one JVM. ECS `desiredCount` is therefore **1**. ALB cookie stickiness would not pin native MCP
+clients. Blue/green still replaces that single task and drops in-memory MCP sessions; clients must
+re-`initialize`.
 
 The interactive login session lives in `HTTP_SESSION_TABLE`, separate from `SESSION_TABLE`: it has a
 different lifecycle (minutes, rotated on login) and id space (servlet session ids), and keeping the
@@ -334,8 +338,10 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_unassign_user_services` | Unassign one or more user services and/or service packs from a user. Mutates live BroadWorks data. |
 
 Each tool resolves the caller's BroadWorks connection from the resource store (by `subject`) via the
-`AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Adding a new tool set
-(Users, Devices, Call Centers, CDRs, …) is just a new `@Tool` bean registered in `McpToolConfig`.
+`AlpacaConnectionFactory`, calls the Alpaca toolkit, and returns compact DTOs. Tools are `@McpTool`
+methods on `@Component` beans (annotation-scanned). Required identifiers and create fields are
+elicited when omitted and the client supports it; passwords, service lists, pagination, and the
+optional connection `resourceId` are never elicited. Adding a new tool set is a new `@McpTool` bean.
 
 > **Detailed tool schema:** see **[docs/mcp-tools-schema.md](docs/mcp-tools-schema.md)** for the full
 > schema of every tool — all input parameters (name, type, required/optional) and the exact shape of
@@ -349,7 +355,9 @@ The `cdk/` app provisions ECS Fargate behind an HTTPS ALB with **CodeDeploy blue
 groups, `CODE_DEPLOY` controller), an ECR repository (`broadworks-mcp`), the three DynamoDB tables
 (sessions with the `refresh-index` GSI + http-sessions + user-config) encrypted by a customer-managed
 KMS key, a Fargate **task IAM role** granting scoped KMS + DynamoDB access (the blueprint's "IRSA"
-role), CloudWatch logs, and SSM SecureString-backed secrets injected as container env.
+role), CloudWatch logs, and SSM SecureString-backed secrets injected as container env. The service
+runs a **single Fargate task** (`desiredCount: 1`) because STREAMABLE MCP sessions are in-process
+(see *Notes & limitations*).
 
 Image rollouts are owned by **CodeDeploy**, not by `cdk deploy`. The stack no longer builds a
 `DockerImageAsset` on a laptop: the initial task definition uses a public placeholder image (or
@@ -450,6 +458,13 @@ pattern.
 
 ## Notes & limitations
 
+- **Single Fargate task (STREAMABLE MCP):** elicitation requires the STREAMABLE transport, whose
+  sessions (`Mcp-Session-Id`, open SSE, waiting `elicit()`) are in-process. The service runs
+  `desiredCount: 1` because ALB stickiness is cookie-only and cannot pin native MCP clients on that
+  header. Do not raise the count without a header-hashing proxy or an external MCP session store
+  (not available in the current Spring AI / MCP Java SDK). OAuth remains DynamoDB-backed and would
+  survive a second task; `/mcp` would not. CodeDeploy blue/green still drops live STREAMABLE
+  sessions when the task is replaced — clients must re-`initialize`.
 - **In-memory storage is non-durable and single-node**: sessions/clients/resources are lost on
   restart and not shared across replicas. Use `STORAGE_BACKEND=DYNAMODB` for production.
 - **Alpaca licensing** is provided by the bundled `co.ecg:ecg-licensing` runtime (installed from

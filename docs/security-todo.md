@@ -1,126 +1,164 @@
-# Security TODO
+# Security review TODO
 
-Outstanding items from the security review. Everything not listed here was fixed in the
-remediation pass (C2, C3, H1, H2, H4, M1, M3, M4, M5, M6, M7, M8, M9); the identifiers below are
-the ones from that review so the two documents line up.
+Review date: 2026-08-24
 
-## Accepted risks (no action planned)
+Scope: Spring Boot 4.1 MCP server as an internet-facing OAuth 2.1 authorization server + resource server + BroadWorks admin plane. Covered filter chains, DCR, token/session stores, KMS, portal API, MCP tools, SSRF host checks, logging, Dockerfile, and the CDK/WAF stack.
 
-### C1 — Any Google account gets full MCP access
+This is a design/code review, not a live penetration test. Overall posture is **above average for an MCP server**, with real thought put into tokens, encryption, CSRF, CORS, and tenant isolation. Residual risk is still high because any authenticated Google user plus a BroadWorks login can mutate live telephony data through an LLM, and a few controls are checked once then trusted forever.
 
-**Decision: accepted.** Every verified Google account is intentionally granted full MCP access;
-there is no email/domain allow-list and no tenant-membership check. `oidcUserService()` continues
-to require `email_verified` only.
+---
 
-What this means in practice, and why the rest of the design still holds:
+## What is in good shape
 
-- Tenant isolation is per-`subject`, not per-organisation. A user can only ever see the BroadWorks
-  connections they themselves created (`DynamoDbResourceStore` scopes every read and write to the
-  authenticated subject), so "everyone can log in" does **not** mean "everyone shares data".
-- The BroadWorks credentials a user supplies are their own, so the blast radius of an unknown
-  account is bounded by what that account can already do against BroadWorks directly.
-- The internet-facing surface is now rate-limited by WAF (see M6, fixed) and can no longer be used
-  to reach internal hosts (C2, fixed).
+- **Split filter chains** with default-deny: AS at highest precedence, portal at `/portal/**` + `/api/portal/**`, everything else on the app chain. Actuator exposure is only `health` and `info`.
+- **OAuth 2.1 hygiene**: public DCR only (no client secrets), PKCE required, refresh-token rotation, opaque access tokens, SHA-256 at rest, RFC 8707 audience bound to the configured MCP resource.
+- **Redirect allow-list** is structural (scheme/host/port + path-segment), rejects `userinfo`, and does not treat `https://app.example.com.evil.tld` as a prefix of `app.example.com`.
+- **Portal CSRF** uses a JS-readable cookie; MCP/DCR CSRF exemptions are limited to non-browser bearer/public-client paths. CORS is origin-allow-listed with `allowCredentials=false`.
+- **Secrets**: Google/Alpaca come from SSM; BroadWorks passwords and IdP tokens are KMS-encrypted with an encryption context; `.env` / `alpaca-license.txt` are gitignored; in-memory/unencrypted storage cannot silently go to production.
+- **Tenant isolation**: resources are keyed by IdP `sub` + `resourceId`; tools resolve connections only for `UserContext.current()`.
+- **Infra**: private Fargate tasks, HTTPS ALB (HTTP only as an explicit opt-out), CMK with rotation + PITR, WAF rate limits, non-root image, read-only root filesystem.
 
-If this decision is ever revisited, the change is small: an allow-list check in `oidcUserService()`
-plus a re-check in `StoreOpaqueTokenIntrospector` (so already-issued tokens stop working too).
+---
 
-## Open — should be scheduled
+## Recommended priority
 
-### H3 — Ancient, unmaintained dependencies
+1. Identity allow-list / Workspace `hd` (if this is not public SaaS).
+2. Re-check `HostAllowlist` on every connect/verify.
+3. Bearer-only `/mcp`; consent on; no passwords on tools; split or confirm writes.
+4. Pin the Google redirect URI; drop default DEBUG on `co.ecg.alpaca`.
+5. Disable or tightly IAM-scope ECS Exec; tighten WAF exclusions when you have sampled blocks.
 
-`pom.xml` still pulls:
+Not done in the original review: live attack, dependency CVE scan, or Alpaca bytecode review.
 
-- `apache-jcs:1.3` (2007) — the Alpaca response cache configured by `src/main/resources/cache.ccf`.
-  Unmaintained and carries known Java-deserialization issues. Note the JEP-290 filters added for
-  C3 only cover *our* session/authorization payloads; they do not constrain JCS's own disk-cache
-  deserialization.
-- `concurrent:concurrent:1.0` (2004) — superseded entirely by `java.util.concurrent`.
+---
 
-Action: migrate the cache to `commons-jcs3` or Caffeine, drop `concurrent:1.0`, then add
-`dependency-check-maven` (or Dependabot) so this cannot silently rot again.
+## Critical / high
 
-Related, lower urgency: `license3j:1.0.7` (2013) and `java-semver:0.9.0` (2017) are stale.
+### [ ] 1. Restrict who can become an operator of this admin plane
 
-### M2 — Client registration is unauthenticated and only coarsely throttled
+`VerifiedEmailOidcUserService` only requires `email_verified=true`. There is no hosted-domain (`hd`), email allow-list, or group check. Combined with `requireAuthorizationConsent(false)`, the first Google login to a dynamically registered public client issues a token that can call every mutating tool.
 
-`DynamicClientRegistrationController` accepts anonymous `POST /oauth/register` and writes a
-90-day (`REGISTERED_CLIENT_TTL:P90D`) DynamoDB item per call. The WAF rate-based rule added for M6
-(100 requests / 5 min / IP) blunts the storage/cost amplification but does not remove it.
+That is acceptable only if this is intentionally a multi-tenant SaaS and BroadWorks credentials are the real gate. For an internal/enterprise deployment it is an open registration desk onto create/modify user, group, service-pack, and service-authorization tools.
 
-Remaining work:
+**Fix:** restrict IdP identities (Google Workspace `hd`, allow-list, or IdP groups) and turn consent back on so users see which MCP client they are authorizing.
 
-- Cap the length of `client_name` and the number of `redirect_uris`.
-- Shorten the default registration TTL, or make it proportional to observed use.
+### [ ] 2. Close the confused-deputy / prompt-injection surface on mutating MCP tools
 
-### Restrict the scopes accepted at registration
+A valid bearer (or, see item 4, a portal session) can immediately:
 
-`DynamicClientRegistrationController` echoes back whatever scopes a client asks for. This is
-currently harmless because `StoreOpaqueTokenIntrospector` grants `NO_AUTHORITIES` and nothing is
-authorised per-scope — but it becomes a real gap the moment scopes start being enforced. Restrict
-registration to the known set (`openid`, `email`, `profile`) now, while it is a no-op change.
+- `broadworks_create_user` / `broadworks_modify_user` (create accepts a **password**)
+- `broadworks_create_group` / `broadworks_modify_group`
+- assign/unassign user and group services, modify SP/group authorizations
 
-### Fail fast when Google OIDC is unconfigured
+There is no confirmation step, dry-run, or tool-level role. Anything the LLM reads from BroadWorks (names, emails, notes) can steer later tool calls. `broadworks_add_connection` correctly refuses passwords; `broadworks_create_user` does the opposite, so BroadWorks user passwords can land in the model transcript.
 
-`SecurityConfig` falls back to the placeholder client id `unconfigured-google-client` when
-`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are absent, so a misconfigured production deployment
-starts and then fails at login instead of refusing to boot. Mirror the approach used for the
-in-memory storage guard (`StorageConfig.validateInMemoryUsage`): allow the placeholder only under a
-dev/local/stdio profile.
+**Fix:** split read vs write tools (or require a step-up / human confirm for writes); never take passwords on MCP tools; treat tool results as untrusted input to the model.
 
-### Idle BroadWorks connections are never proactively evicted
+### [ ] 3. Re-check SSRF host allow-list on every connect (DNS rebinding)
 
-`CachingAlpacaConnectionFactory` holds per-user connections — and therefore decrypted BroadWorks
-credentials — in a `ConcurrentHashMap` that is only pruned on access. An idle entry stays resident
-for the lifetime of the task. Add active eviction on `alpacaProperties.connectionCacheTtl()`
-(a scheduled sweep, or Caffeine's `expireAfterAccess` if H3 brings it in anyway).
+`HostAllowlist` is solid at the moment it runs: all A/AAAA records, IPv4-mapped IPv6, ULA, link-local (including `169.254.169.254`), `localhost`, `metadata.google.internal`. `ConnectionValidation` uses it on both MCP add and the portal.
 
-## Open — minor / operational
+`CachingAlpacaConnectionFactory` / `LiveAlpacaConnectionFactory` then connect later **without resolving again**. A hostname that is public at save time can be rebound to link-local or RFC1918 before `verify` or the first tool call. Port is attacker-chosen (`1–65535`), so this is not limited to OCI 2208.
 
-- **Unauthenticated log amplification.** `StoreOpaqueTokenIntrospector` and
-  `BearerChallengeEntryPoint` log at WARN on every failed introspection, so an anonymous caller can
-  inflate CloudWatch volume and cost. Drop to DEBUG, or sample/rate-limit the WARN.
-- **A KMS `Decrypt` now runs on the introspection hot path.** `DynamoDbSessionStore.toSession`
-  decrypts the stored upstream id token on every token introspection, even though nothing reads it
-  today. If this shows up in latency or KMS spend, either stop persisting the upstream tokens
-  (nothing consumes them) or decrypt them lazily.
-- **AWS account id in a local CDK file.** `cdk/cdk.context.json` contains account `264723482771`.
-  It is currently untracked (never committed), so this is only a reminder: keep it that way — add
-  it to `.gitignore` or use environment-driven lookups rather than committing cached context.
-- **Read-only root filesystem: mount ownership (confirmed on the first deploy).** Fargate does
-  create the ephemeral volumes empty and owned by `root:root` 0755 — the image's ownership for
-  `/tmp` and `/app/.cache` is *not* inherited — so the non-root app (uid 10001) failed at startup
-  with `WebServerException: Unable to create tempDir. java.io.tmpdir is set to /tmp`. The task
-  definition now runs a short-lived root `volume-init` container that `chown`s both mounts to
-  10001 (and `chmod 1777 /tmp`) before the app container starts (`dependsOn` condition `SUCCESS`);
-  both containers keep an immutable root filesystem. Any new writable mount must be added to that
-  fix-up list too.
-- **WAF managed rule groups are scoped down on the OAuth *and* MCP transport endpoints (accepted
-  trade-off).** Both managed rule groups (`AWSManagedRulesCommonRuleSet`,
-  `AWSManagedRulesKnownBadInputsRuleSet`) answered any request carrying a plain `http://` URL with a
-  bare 403 before it reached the app, which made RFC 8252 loopback redirect URIs — the ones local
-  MCP clients use — unusable: DCR at `/oauth/register`, `/oauth2/authorize` and `/oauth2/token` all
-  failed. The same generic body/URL heuristics are incompatible with the MCP transport itself
-  (`POST /mcp`, legacy `/sse`): MCP is JSON-RPC whose tool arguments and results carry arbitrary
-  user-/model-supplied content — URLs (the same `://` RFI heuristic), code/markup that reads as
-  XSS/SQLi to the body rules, and bodies that routinely exceed WAF's 8 KB body-inspection limit
-  (`SizeRestrictions_BODY`, an AWS service default on regional/ALB scope that cannot be raised for an
-  ALB) — so left fully covered the managed groups would 403 ordinary MCP calls with no app-visible
-  trace. All five paths (`/mcp`, `/sse`, `/oauth/register`, `/oauth2/authorize`, `/oauth2/token`) are
-  therefore excluded from both rule groups via a `scopeDownStatement`. They are not left unguarded:
-  they keep the rate-based rules below and are strictly protected by the app — `/mcp`/`/sse` require a
-  valid opaque bearer token on every request (local introspection), enforce the CORS/Origin
-  allowlist (DNS-rebinding guard) and an SSRF guard on connection targets; OAuth enforces exact
-  redirect-URI allowlisting, mandatory PKCE S256 and public-clients-only. Every other path — the
-  interactive Google login, `/.well-known/**` and the actuator health probe — remains fully covered.
-  The exact firing rules could not be identified because the deploy IAM user lacks
-  `wafv2:ListWebACLs` / `wafv2:GetWebACL` and WAF logging was off. Logging now lands in the
-  `aws-waf-logs-broadworks-mcp` log group: revisit and replace the path exclusions with narrow
-  `ruleActionOverrides` for just the offending rules once the logs name them.
-- **WAF rate limits vs. shared-NAT MCP clients (residual, IP-aggregation limitation).** The
-  rate-based rules key on the client IP: `RateLimitGeneral` allows 2000 req / 5 min / IP (≈6.7 rps)
-  and the OAuth register/token rules 100 req / 5 min / IP. These are generous for a single MCP user
-  (an active agent issues one self-contained `POST /mcp` per JSON-RPC message), but many users behind
-  a single corporate NAT egress IP share one budget and could collectively trip `RateLimitGeneral`.
-  This is inherent to IP-based aggregation and is accepted for now; if it bites, raise the general
-  limit or move `/mcp` to a separate, higher rate-based rule scoped to that path.
+On Fargate the interesting targets are `169.254.170.2` (task credentials / metadata) and anything else in the VPC. Alpaca speaks OCI, not arbitrary HTTP, so full IMDS credential theft is not a given — but this is still unauthenticated-to-the-target TCP from your task role’s network.
+
+`ALLOW_PRIVATE_NETWORK_TARGETS=true` disables **all** of this, including the blocked-hostname list. Do not set that in ECS.
+
+**Fix:** re-resolve and re-apply `HostAllowlist` inside `login()` / `verify()` immediately before `server.connect`; optionally pin the allowed addresses for the life of the connection.
+
+---
+
+## Medium
+
+### [ ] 4. Require a bearer token on `/mcp` (do not accept a portal Google session)
+
+The app chain is `anyRequest().authenticated()` with both `oauth2Login` and the opaque resource server. A browser that is signed into `/portal` can `POST /mcp` with the session cookie and no bearer. Those paths are in `CSRF_EXEMPT_PATHS`.
+
+Cross-site browsers are mostly saved by CORS (`credentials: false`) and SameSite=Lax. Same-origin XSS, a malicious extension, or a same-site gadget would get the full tool set without ever completing DCR/PKCE.
+
+**Fix:** require a bearer on `/mcp` and `/sse` (for example `requestMatchers("/mcp", "/mcp/**", "/sse").authenticated()` plus a filter that rejects session-only auth).
+
+### [ ] 5. Pin the Google `redirect_uri` instead of deriving it from the request
+
+`PublicBaseUrlProperties.callbackUri()` exists but `ClientRegistration` is built from `CommonOAuth2Provider.GOOGLE` with no fixed redirect. Spring will build `{baseUrl}/login/oauth2/code/google` from the incoming request. `server.forward-headers-strategy: framework` trusts `X-Forwarded-*` with no trusted-proxy list.
+
+Tasks are only reachable from the ALB, which limits this, but a poisoned `X-Forwarded-Host`/`Proto` can still change the redirect Spring sends to Google if that URI is also registered in the Google client.
+
+**Fix:** set the Google registration redirect to `publicBaseUrl.callbackUri()` and restrict forwarded-header trust to the ALB.
+
+### [ ] 6. Harden open DCR + well-known redirects + missing consent
+
+Unauthenticated `POST /oauth/register` is rate-limited (100/5 min/IP) and redirect-checked. Clients are always materialized as public + PKCE. Residual issues:
+
+- Any scope string is stored (unused for authz today — decorative, but dangerous if you later honor scopes).
+- `@NotEmpty` on the DCR record is never activated (`@Valid` is missing); empty-list is checked by hand only.
+- `https://vscode.dev/redirect` (and similar) are allow-listed; those relays are a known open-redirect class.
+- Loopback HTTP is always allowed (correct for native apps, useless as a remote-phishing sink).
+
+**Fix:** add `@Valid`, ignore/override requested scopes, consider dropping `vscode.dev` unless you need it, and enable consent.
+
+### [ ] 7. Stop defaulting logs to DEBUG
+
+`logback-spring.xml` defaults `co.pitayagroup.mcp.broadworks` and `co.ecg.alpaca` to **DEBUG**. App code is careful not to log secrets; the Alpaca toolkit is a third-party JAR and may log OCI fields (including passwords) at DEBUG. CloudWatch retains a month.
+
+**Fix:** default app/Alpaca to INFO; raise DEBUG only via `LOG_LEVEL_*`.
+
+### [ ] 8. Disable or tightly gate ECS Exec in production
+
+`enableExecuteCommand: true` plus the task role’s DynamoDB + KMS access means `ecs:ExecuteCommand` is equivalent to reading every tenant secret (env has `GOOGLE_CLIENT_SECRET` and `ALPACA_LICENSE_KEY`; KMS can unwrap stored passwords). Fine as break-glass if IAM is tight; dangerous if that action is on a broad role.
+
+**Fix:** disable Exec in prod, or gate it with a dedicated break-glass role and session logging.
+
+### [ ] 9. Narrow WAF managed-rule exclusions
+
+Documented and partly justified (loopback `http://` and JSON-RPC bodies trip Core Rule Set). `/mcp`, `/sse`, `/oauth/register`, `/oauth2/authorize`, `/oauth2/token` rely on app checks + IP rate limits only. `STARTS_WITH /mcp` also skips any future path under that prefix.
+
+**Fix:** keep rate limits; add WAF logging (already present) and narrow exclusions to the specific managed rules that fire, rather than the whole groups.
+
+---
+
+## Low / defense-in-depth
+
+### [ ] 10. Close HostAllowlist gaps
+
+No CGNAT `100.64.0.0/10`, no IPv4 “this network” `0.0.0.0/8` beyond `isAnyLocalAddress()`, no connect-time pin. Decimal/IPv4-mapped forms look handled.
+
+### [ ] 11. Reject `#` in Dynamo sort-key parts
+
+Dynamo sort key is `subject + "#" + resourceId`. A `sub` containing `#` would break `begins_with` isolation. Google `sub` is typically numeric; still worth rejecting `#` in both parts.
+
+### [ ] 12. Tighten serialization allow-list
+
+`SerializationFilters` is the right idea (Dynamo write → RCE). It still allows `java.net.URL` (DNS on deserialize) and broad `java.util.*` / `org.springframework.security.**`. Residual only if the table is already writable.
+
+### [ ] 13. Add method-level security
+
+No `@EnableMethodSecurity` / `@PreAuthorize`. One missed matcher and tools are reachable. Defense in depth belongs on the service/tool methods.
+
+### [ ] 14. Keep error surfaces thin
+
+`/whoami` and `/error` are authenticated/public respectively. Keep `server.error.include-stacktrace=never` (Boot default) and do not expose details on `/actuator/health`.
+
+### [ ] 15. Treat `JAVA_OPTS` as an injection sink
+
+Dockerfile `sh -c "exec java $JAVA_OPTS ..."` is an injection sink if an attacker can set `JAVA_OPTS` (they already own the task definition).
+
+### [ ] 16. Keep portal `UserContext` typed to known principals
+
+Portal `UserContext` only understands `OAuth2AuthenticatedPrincipal` + `sub`. That works for Google `OidcUser`; a future login type would silently 401 rather than widen access.
+
+### [ ] 17. Do not use the stdio profile for isolated multi-user access
+
+stdio profile has no HTTP security and no local principal implementation; tools throw “No authenticated user”. Fine if unused in prod; do not point a desktop client at it expecting isolation.
+
+### [ ] 18. Treat `lib/` Alpaca JARs as a trusted-code boundary
+
+Supply chain: Alpaca JARs are local, not Maven Central. Checksums / signed artifacts.
+
+---
+
+## Follow-up reviews
+
+### [ ] Live attack / penetration test
+### [ ] Dependency CVE scan
+### [ ] Alpaca bytecode review

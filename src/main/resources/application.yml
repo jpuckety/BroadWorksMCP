@@ -15,17 +15,14 @@ spring:
         # absent). So this line must be set explicitly to expose the /mcp endpoint the client connects
         # to instead of only the legacy SSE transport at /sse.
         #
-        # STATELESS (not STREAMABLE) is required because this server runs as multiple load-balanced
-        # instances (CDK desiredCount > 1). The STREAMABLE transport keeps per-client session state
-        # (keyed by the Mcp-Session-Id it mints on `initialize`) in memory on a SINGLE instance. Native
-        # MCP clients speak the JSON-RPC transport without cookies, so the ALB's cookie stickiness does
-        # NOT pin them; follow-up calls (`notifications/initialized`, `tools/call`, DELETE) round-robin
-        # to a different instance that never saw the session and are rejected with 404. STATELESS
-        # (WebMvcStatelessServerTransport) assigns no session id and handles every POST /mcp
-        # self-contained, so any instance can serve any request. This server only exposes @Tool
-        # endpoints (no server-initiated notifications / resource subscriptions), so the streaming
-        # features STATELESS forgoes are unused here.
-        protocol: STATELESS
+        # STREAMABLE is required for MCP elicitation: during a tool call the server must send
+        # elicitation/create back to the client and wait for the response, which needs a
+        # session-capable transport (McpSyncRequestContext / McpSyncServerExchange). The
+        # STATELESS transport rejects that context, so tools cannot elicit on STATELESS.
+        # STREAMABLE keeps per-client session state (Mcp-Session-Id) in memory on one JVM.
+        # ECS therefore runs desiredCount: 1 — ALB cannot pin native MCP clients on that
+        # header. Do not scale out until an external MCP session store exists.
+        protocol: STREAMABLE
         # stdio is disabled here and enabled only by the `stdio` profile.
         stdio: false
         instructions: |

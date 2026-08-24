@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
@@ -30,20 +32,33 @@ import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
 import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceProviderTableRow;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools.CreateServiceProviderDetails;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServiceProviderId;
+
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.DefaultOAuth2AuthenticatedPrincipal;
 
+@ExtendWith(MockitoExtension.class)
 class ServiceProviderToolsTest {
 
     private AlpacaConnectionFactory connectionFactory;
     private ServiceProviderTools tools;
+
+    @Mock
+    private McpSyncRequestContext requestContext;
 
     @BeforeEach
     void setUp() {
@@ -558,5 +573,105 @@ class ServiceProviderToolsTest {
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("create service provider");
         }
+    }
+
+    @Test
+    void getServiceProviderDoesNotElicitWhenIdPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getServiceProviderId()).thenReturn("sp-9");
+        when(sp.getServiceProviderName()).thenReturn("Globex");
+        when(sp.getDefaultDomain()).thenReturn("globex.example.com");
+        when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn(null);
+        when(sp.getContact()).thenReturn(null);
+        when(sp.getAddress()).thenReturn(null);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9"))).thenReturn(sp);
+
+            tools.getServiceProvider("sp-9", null, requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(ServiceProviderId.class));
+        }
+    }
+
+    @Test
+    void getServiceProviderUsesElicitedIdWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(ServiceProviderId.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new ServiceProviderId("sp-9"), Map.of()));
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        when(sp.getServiceProviderId()).thenReturn("sp-9");
+        when(sp.getServiceProviderName()).thenReturn("Globex");
+        when(sp.getDefaultDomain()).thenReturn("globex.example.com");
+        when(sp.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(sp.getResellerId()).thenReturn(null);
+        when(sp.getSupportEmail()).thenReturn(null);
+        when(sp.getContact()).thenReturn(null);
+        when(sp.getAddress()).thenReturn(null);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class)) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-9"))).thenReturn(sp);
+
+            final ServiceProviderDetail detail = tools.getServiceProvider(null, null, requestContext);
+
+            assertThat(detail.serviceProviderId()).isEqualTo("sp-9");
+        }
+    }
+
+    @Test
+    void createServiceProviderUsesElicitedRequiredFieldsWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateServiceProviderDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new CreateServiceProviderDetails("sp-new", "Acme", "acme.example.com"), Map.of()));
+
+        final ServiceProvider created = mock(ServiceProvider.class);
+        when(created.getServiceProviderId()).thenReturn("sp-new");
+        when(created.getServiceProviderName()).thenReturn("Acme");
+        when(created.getDefaultDomain()).thenReturn("acme.example.com");
+        when(created.getIsEnterprise()).thenReturn(Boolean.FALSE);
+        when(created.getResellerId()).thenReturn(null);
+        when(created.getSupportEmail()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-new")))
+                    .thenReturn(created);
+
+            final ServiceProviderDetail detail = tools.createServiceProvider(
+                    null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, null, null, requestContext);
+
+            org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderName("Acme");
+            assertThat(detail.serviceProviderId()).isEqualTo("sp-new");
+        }
+    }
+
+    @Test
+    void createServiceProviderFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateServiceProviderDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.createServiceProvider(
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("serviceProviderId, serviceProviderName and defaultDomain are required");
     }
 }

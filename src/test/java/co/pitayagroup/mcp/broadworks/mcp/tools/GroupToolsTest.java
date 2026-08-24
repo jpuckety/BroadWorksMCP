@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
@@ -31,20 +33,33 @@ import co.ecg.alpaca.toolkit.generated.datatypes.Contact;
 import co.ecg.alpaca.toolkit.generated.datatypes.StreetAddress;
 import co.ecg.alpaca.toolkit.generated.tables.GroupGroupTable1Row;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools.CreateGroupDetails;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.GroupRef;
+
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.DefaultOAuth2AuthenticatedPrincipal;
 
+@ExtendWith(MockitoExtension.class)
 class GroupToolsTest {
 
     private AlpacaConnectionFactory connectionFactory;
     private GroupTools tools;
+
+    @Mock
+    private McpSyncRequestContext requestContext;
 
     @BeforeEach
     void setUp() {
@@ -491,5 +506,148 @@ class GroupToolsTest {
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("create group");
         }
+    }
+
+    @Test
+    void getGroupDoesNotElicitWhenBothIdsPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final Group group = mock(Group.class);
+        when(group.getGroupId()).thenReturn("grp-9");
+        when(group.getGroupName()).thenReturn("Support");
+        when(group.getServiceProviderId()).thenReturn("sp-1");
+        when(group.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(group.getUserCount()).thenReturn(null);
+        when(group.getUserLimit()).thenReturn(null);
+        when(group.getCallingLineIdName()).thenReturn(null);
+        when(group.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(group.getTimeZone()).thenReturn(null);
+        when(group.getLocationDialingCode()).thenReturn(null);
+        when(group.getContact()).thenReturn(null);
+        when(group.getAddress()).thenReturn(null);
+
+        try (MockedConstruction<ServiceProvider> ignored = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class)) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-9"))).thenReturn(group);
+
+            tools.getGroup("sp-1", "grp-9", null, requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(GroupRef.class));
+        }
+    }
+
+    @Test
+    void getGroupUsesElicitedGroupRefWhenIdsMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(GroupRef.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new GroupRef("sp-1", "grp-9"), Map.of()));
+
+        final Group group = mock(Group.class);
+        when(group.getGroupId()).thenReturn("grp-9");
+        when(group.getGroupName()).thenReturn("Support");
+        when(group.getServiceProviderId()).thenReturn("sp-1");
+        when(group.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(group.getUserCount()).thenReturn(null);
+        when(group.getUserLimit()).thenReturn(null);
+        when(group.getCallingLineIdName()).thenReturn(null);
+        when(group.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(group.getTimeZone()).thenReturn(null);
+        when(group.getLocationDialingCode()).thenReturn(null);
+        when(group.getContact()).thenReturn(null);
+        when(group.getAddress()).thenReturn(null);
+
+        try (MockedConstruction<ServiceProvider> ignored = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class)) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-9"))).thenReturn(group);
+
+            final GroupDetail detail = tools.getGroup(null, null, null, requestContext);
+
+            assertThat(detail.groupId()).isEqualTo("grp-9");
+            assertThat(detail.serviceProviderId()).isEqualTo("sp-1");
+        }
+    }
+
+    @Test
+    void getGroupThrowsWhenIdsMissingWithoutContext() {
+        assertThatThrownBy(() -> tools.getGroup(null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("is required");
+    }
+
+    @Test
+    void createGroupUsesElicitedRequiredFieldsWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateGroupDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new CreateGroupDetails("sp-1", "grp-new", "Support", "sp1.example.com", 50),
+                        Map.of()));
+
+        final Group created = mock(Group.class);
+        when(created.getGroupId()).thenReturn("grp-new");
+        when(created.getGroupName()).thenReturn("Support");
+        when(created.getServiceProviderId()).thenReturn("sp-1");
+        when(created.getDefaultDomain()).thenReturn("sp1.example.com");
+        when(created.getUserCount()).thenReturn(0);
+        when(created.getUserLimit()).thenReturn(50);
+        when(created.getCallingLineIdName()).thenReturn(null);
+        when(created.getCallingLineIdPhoneNumber()).thenReturn(null);
+        when(created.getTimeZone()).thenReturn(null);
+        when(created.getLocationDialingCode()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final Group.GroupConsolidatedAddResponse response =
+                mock(Group.GroupConsolidatedAddResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedConstruction<ServiceProvider> ignored = mockConstruction(ServiceProvider.class);
+             MockedStatic<Group> groupStatics = mockStatic(Group.class);
+             MockedConstruction<Group.GroupConsolidatedAddRequest> reqCtor =
+                     mockConstruction(Group.GroupConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            groupStatics.when(() -> Group.getPopulatedGroup(any(), eq("grp-new")))
+                    .thenReturn(created);
+
+            final GroupDetail detail = tools.createGroup(
+                    null, null, null, null, null,
+                    null, null, null,
+                    null, null, null,
+                    null, null, null, null, null, null, null, requestContext);
+
+            org.mockito.Mockito.verify(reqCtor.constructed().get(0)).setGroupId("grp-new");
+            org.mockito.Mockito.verify(reqCtor.constructed().get(0)).setGroupName("Support");
+            assertThat(detail.groupId()).isEqualTo("grp-new");
+            assertThat(detail.serviceProviderId()).isEqualTo("sp-1");
+        }
+    }
+
+    @Test
+    void createGroupFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateGroupDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.createGroup(
+                null, null, null, null, null,
+                null, null, null,
+                null, null, null,
+                null, null, null, null, null, null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("serviceProviderId, groupId, groupName, defaultDomain and userLimit are required");
+    }
+
+    @Test
+    void createGroupThrowsWhenRequiredFieldsMissingWithoutContext() {
+        assertThatThrownBy(() -> tools.createGroup(
+                null, null, null, null, null,
+                null, null, null,
+                null, null, null,
+                null, null, null, null, null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("is required");
     }
 }

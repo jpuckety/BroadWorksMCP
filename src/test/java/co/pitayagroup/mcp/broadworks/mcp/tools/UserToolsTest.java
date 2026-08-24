@@ -39,12 +39,18 @@ import co.ecg.alpaca.toolkit.generated.tables.UserUserTable1Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable2Row;
 import co.ecg.alpaca.toolkit.generated.tables.UserUserTable3Row;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.UserId;
+import co.pitayagroup.mcp.broadworks.mcp.tools.UserTools.CreateUserDetails;
+
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.DefaultOAuth2AuthenticatedPrincipal;
@@ -53,11 +59,13 @@ class UserToolsTest {
 
     private AlpacaConnectionFactory connectionFactory;
     private UserTools tools;
+    private McpSyncRequestContext requestContext;
 
     @BeforeEach
     void setUp() {
         connectionFactory = mock(AlpacaConnectionFactory.class);
         tools = new UserTools(connectionFactory);
+        requestContext = mock(McpSyncRequestContext.class);
         final var principal = new DefaultOAuth2AuthenticatedPrincipal("sub-1",
                 Map.of(UserInfo.SUBJECT_ATTRIBUTE, "sub-1", UserInfo.EMAIL_ATTRIBUTE, "u@example.com"),
                 List.of());
@@ -547,5 +555,129 @@ class UserToolsTest {
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("create user");
         }
+    }
+
+    @Test
+    void getUserDoesNotElicitWhenIdPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final User user = mock(User.class);
+        when(user.getUserId()).thenReturn("user-9@example.com");
+        when(user.getGroupId()).thenReturn("grp-9");
+        when(user.getServiceProviderId()).thenReturn("sp-1");
+        when(user.getAddress()).thenReturn(null);
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class)) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-9@example.com"))).thenReturn(user);
+
+            tools.getUser("user-9@example.com", null, requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(UserId.class));
+        }
+    }
+
+    @Test
+    void getUserUsesElicitedIdWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(UserId.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new UserId("user-9@example.com"), Map.of()));
+
+        final User user = mock(User.class);
+        when(user.getUserId()).thenReturn("user-9@example.com");
+        when(user.getGroupId()).thenReturn("grp-9");
+        when(user.getServiceProviderId()).thenReturn("sp-1");
+        when(user.getAddress()).thenReturn(null);
+
+        try (MockedStatic<User> userStatics = mockStatic(User.class)) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-9@example.com"))).thenReturn(user);
+
+            final UserDetail detail = tools.getUser(null, null, requestContext);
+
+            assertThat(detail.userId()).isEqualTo("user-9@example.com");
+        }
+    }
+
+    @Test
+    void createUserUsesElicitedRequiredFieldsWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateUserDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new CreateUserDetails("sp-1", "grp-1", "user-new@example.com", "Jane", "Doe"),
+                        Map.of()));
+
+        final User created = mock(User.class);
+        when(created.getUserId()).thenReturn("user-new@example.com");
+        when(created.getGroupId()).thenReturn("grp-1");
+        when(created.getServiceProviderId()).thenReturn("sp-1");
+        when(created.getFirstName()).thenReturn("Jane");
+        when(created.getLastName()).thenReturn("Doe");
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        final List<List<Object>> ctorArgs = new ArrayList<>();
+        try (MockedStatic<User> userStatics = mockStatic(User.class);
+             MockedConstruction<User.UserAddRequest> reqCtor =
+                     mockConstruction(User.UserAddRequest.class,
+                             (m, ctx) -> {
+                                 ctorArgs.add(new ArrayList<>(ctx.arguments()));
+                                 when(m.fire()).thenReturn(response);
+                             })) {
+            userStatics.when(() -> User.getPopulatedUser(any(), eq("user-new@example.com")))
+                    .thenReturn(created);
+
+            final UserDetail detail = tools.createUser(
+                    null, null, null, null, null,
+                    null, null, "s3cret", null, null,
+                    null, null, null, null, null,
+                    null, null, null, null, null, null, null, null, requestContext);
+
+            assertThat(ctorArgs.get(0)).containsExactly(
+                    null, "sp-1", "grp-1", "user-new@example.com", "Doe", "Jane", "Doe", "Jane");
+            verify(reqCtor.constructed().get(0)).setPassword("s3cret");
+            verify(requestContext).elicit(any(), eq(CreateUserDetails.class));
+            assertThat(detail.userId()).isEqualTo("user-new@example.com");
+        }
+    }
+
+    @Test
+    void createUserDoesNotElicitPassword() {
+        assertThat(CreateUserDetails.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .containsExactly("serviceProviderId", "groupId", "userId", "firstName", "lastName")
+                .doesNotContain("password");
+    }
+
+    @Test
+    void createUserFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateUserDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.createUser(
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, null, null,
+                null, null, null, null, null, null, null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("serviceProviderId, groupId, userId, firstName and lastName are required");
+        verify(connectionFactory, never()).connect(any(), any());
+    }
+
+    @Test
+    void getUserFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(UserId.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.getUser(null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("userId is required");
+        verify(connectionFactory, never()).connect(any(), any());
     }
 }

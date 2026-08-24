@@ -1,9 +1,10 @@
 package co.pitayagroup.mcp.broadworks.mcp.tools;
 
+import java.lang.reflect.Method;
+
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.method.tool.utils.McpJsonSchemaGenerator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,32 +31,14 @@ class DomainModelToolsTest {
     }
 
     @Test
-    void registersReadOnlyStyleToolWithNoRequiredParameters() {
-        final MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(tools)
-                .build();
-
-        assertThat(provider.getToolCallbacks()).hasSize(1);
-        final ToolDefinition definition = provider.getToolCallbacks()[0].getToolDefinition();
-        assertThat(definition.name()).isEqualTo("broadworks_get_domain_model");
-        assertThat(definition.description()).isEqualTo(DomainModelTools.DESCRIPTION);
-        assertThat(definition.inputSchema())
+    void registersReadOnlyStyleToolWithNoRequiredParameters() throws Exception {
+        final Method method = DomainModelTools.class.getMethod("getDomainModel");
+        final McpTool annotation = method.getAnnotation(McpTool.class);
+        assertThat(annotation).isNotNull();
+        assertThat(annotation.name()).isEqualTo("broadworks_get_domain_model");
+        assertThat(annotation.description()).isEqualTo(DomainModelTools.DESCRIPTION);
+        assertThat(McpJsonSchemaGenerator.generateForMethodInput(method))
                 .contains("\"type\"")
                 .doesNotContain("\"required\":[");
-    }
-
-    @Test
-    void callbackReturnsTheReference() {
-        final ToolCallback callback = MethodToolCallbackProvider.builder()
-                .toolObjects(tools)
-                .build()
-                .getToolCallbacks()[0];
-
-        // MethodToolCallback serializes the String return value as a JSON string.
-        assertThat(callback.call("{}"))
-                .contains("BroadWorks object model")
-                .contains("many-to-many")
-                .contains("Authorized")
-                .contains("serviceProviderId");
     }
 }

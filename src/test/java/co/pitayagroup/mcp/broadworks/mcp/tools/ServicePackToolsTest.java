@@ -26,20 +26,33 @@ import co.ecg.alpaca.toolkit.generated.datatypes.UnboundedPositiveInt;
 import co.ecg.alpaca.toolkit.generated.enums.UserService;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServicePackUserServiceTableRow;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServicePackRef;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServiceProviderId;
+
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.DefaultOAuth2AuthenticatedPrincipal;
 
+@ExtendWith(MockitoExtension.class)
 class ServicePackToolsTest {
 
     private AlpacaConnectionFactory connectionFactory;
     private ServicePackTools tools;
+
+    @Mock
+    private McpSyncRequestContext requestContext;
 
     @BeforeEach
     void setUp() {
@@ -275,8 +288,6 @@ class ServicePackToolsTest {
 
     @Test
     void createServicePackRejectsUnknownService() {
-        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
-
         assertThatThrownBy(() -> tools.createServicePack(
                 "sp-1", "Gold", null, null, 5, null, List.of("Not A Real Service"), null))
                 .isInstanceOf(AlpacaException.class)
@@ -484,5 +495,84 @@ class ServicePackToolsTest {
         assertThatThrownBy(() -> tools.listServicePacks("sp-1", null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("No authenticated user");
+    }
+
+    @Test
+    void listServicePacksDoesNotElicitWhenIdPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final ServiceProvider.ServiceProviderServicePackGetListResponse response =
+                mock(ServiceProvider.ServiceProviderServicePackGetListResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+        when(response.getServicePackName()).thenReturn(new String[] {"Gold"});
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderServicePackGetListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderServicePackGetListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            tools.listServicePacks("sp-1", null, requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(ServiceProviderId.class));
+        }
+    }
+
+    @Test
+    void getServicePackDoesNotElicitWhenIdsPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final ServiceProvider.ServiceProviderServicePackGetDetailListResponse response =
+                detailResponse("Gold", "Premium bundle", true, 25, List.of("Call Waiting"));
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderServicePackGetDetailListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderServicePackGetDetailListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            tools.getServicePack("sp-1", "Gold", null, requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(ServicePackRef.class));
+        }
+    }
+
+    @Test
+    void getServicePackUsesElicitedServicePackRefWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(ServicePackRef.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new ServicePackRef("sp-1", "Gold"), Map.of()));
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final ServiceProvider.ServiceProviderServicePackGetDetailListResponse response =
+                detailResponse("Gold", "Premium bundle", true, 25, List.of("Call Waiting"));
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderServicePackGetDetailListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderServicePackGetDetailListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            final ServicePackDetail detail = tools.getServicePack(null, null, null, requestContext);
+
+            assertThat(detail.servicePackName()).isEqualTo("Gold");
+        }
+    }
+
+    @Test
+    void getServicePackFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(ServicePackRef.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.getServicePack(null, null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("serviceProviderId and servicePackName are required");
     }
 }

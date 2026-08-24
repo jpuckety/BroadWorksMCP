@@ -39,20 +39,32 @@ import co.ecg.alpaca.toolkit.generated.tables.GroupServiceUserServicesAuthorizat
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceGroupServicesAuthorizationTableRow;
 import co.ecg.alpaca.toolkit.generated.tables.ServiceProviderServiceUserServicesAuthorizationTableRow;
 import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
+import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServiceProviderId;
+
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.mcp.annotation.context.StructuredElicitResult;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.DefaultOAuth2AuthenticatedPrincipal;
 
+@ExtendWith(MockitoExtension.class)
 class ServiceToolsTest {
 
     private AlpacaConnectionFactory connectionFactory;
     private ServiceTools tools;
+
+    @Mock
+    private McpSyncRequestContext requestContext;
 
     @BeforeEach
     void setUp() {
@@ -742,5 +754,71 @@ class ServiceToolsTest {
         assertThatThrownBy(() -> tools.getServiceProviderServiceAuthorization("sp-1", null))
                 .isInstanceOf(AlpacaException.class)
                 .hasMessageContaining("No authenticated user");
+    }
+
+    @Test
+    void getServiceProviderAuthorizationDoesNotElicitWhenIdPresent() {
+        when(connectionFactory.connect(eq("sub-1"), eq("res-1"))).thenReturn(null);
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final ServiceProvider.ServiceProviderServiceGetAuthorizationListResponse response =
+                mock(ServiceProvider.ServiceProviderServiceGetAuthorizationListResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+        when(response.getUserServicesAuthorizationTable()).thenReturn(List.of());
+        when(response.getGroupServicesAuthorizationTable()).thenReturn(List.of());
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderServiceGetAuthorizationListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderServiceGetAuthorizationListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            tools.getServiceProviderServiceAuthorization("sp-1", "res-1", requestContext);
+
+            verify(requestContext, never()).elicitEnabled();
+            verify(requestContext, never()).elicit(any(), eq(ServiceProviderId.class));
+        }
+    }
+
+    @Test
+    void getServiceProviderAuthorizationUsesElicitedIdWhenMissing() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(ServiceProviderId.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new ServiceProviderId("sp-1"), Map.of()));
+
+        final ServiceProvider sp = mock(ServiceProvider.class);
+        final ServiceProvider.ServiceProviderServiceGetAuthorizationListResponse response =
+                mock(ServiceProvider.ServiceProviderServiceGetAuthorizationListResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+        final List<ServiceProviderServiceUserServicesAuthorizationTableRow> userRows =
+                List.of(spUserRow("Call Waiting", "true", "true", "5"));
+        when(response.getUserServicesAuthorizationTable()).thenReturn(userRows);
+        when(response.getGroupServicesAuthorizationTable()).thenReturn(List.of());
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderServiceGetAuthorizationListRequest> ignored =
+                     mockConstruction(ServiceProvider.ServiceProviderServiceGetAuthorizationListRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-1"))).thenReturn(sp);
+
+            final ServiceAuthorizationSet result =
+                    tools.getServiceProviderServiceAuthorization(null, null, requestContext);
+
+            assertThat(result.userServices()).containsExactly(
+                    new ServiceAuthorization("Call Waiting", true, new ServiceQuantity(5, false)));
+        }
+    }
+
+    @Test
+    void getServiceProviderAuthorizationFailsWhenElicitationDeclined() {
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(ServiceProviderId.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
+
+        assertThatThrownBy(() -> tools.getServiceProviderServiceAuthorization(null, null, requestContext))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessage("serviceProviderId is required");
     }
 }

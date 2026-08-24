@@ -18,14 +18,14 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Boots the full application on a real HTTP port (in-memory stores) and drives the stateless-HTTP
+ * Boots the full application on a real HTTP port (in-memory stores) and drives the streamable-HTTP
  * MCP endpoint the way a real client does: {@code initialize} then {@code tools/list}. Verifies that
- * every BroadWorks {@code @Tool} is actually returned over the wire (guards against regressions where
+ * every BroadWorks tool is actually returned over the wire (guards against regressions where
  * the tool beans are registered but not exposed).
  *
- * <p>The server runs the {@code STATELESS} transport (see {@code application.yml}), so each POST is
- * self-contained: {@code initialize} returns a plain JSON response with no {@code Mcp-Session-Id}
- * header and no session id is threaded through the follow-up {@code tools/list} call.</p>
+ * <p>The server runs the {@code STREAMABLE} transport (see {@code application.yml}) so elicitation
+ * can use a session-capable exchange. {@code initialize} mints an {@code Mcp-Session-Id} that is
+ * threaded through the follow-up {@code tools/list} and {@code tools/call} requests.</p>
  */
 @SpringBootTest(properties = {"broadworks.storage.backend=IN_MEMORY"},
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -38,7 +38,7 @@ class McpToolsListIntegrationTest {
     private SessionStore sessionStore;
 
     @Test
-    void toolsListReturnsAllBroadWorksToolsOverStatelessHttp() throws Exception {
+    void toolsListReturnsAllBroadWorksToolsOverStreamableHttp() throws Exception {
         sessionStore.createSession(new Session(null, "tok-mcp", null, "client-1", "sub-mcp",
                 "user@example.com", null, null,
                 Instant.now().plus(1, ChronoUnit.HOURS), null, Instant.now(),
@@ -60,8 +60,8 @@ class McpToolsListIntegrationTest {
                 HttpResponse.BodyHandlers.ofString());
 
         assertThat(init.statusCode()).isEqualTo(200);
-        // STATELESS transport mints no session id; there is no Mcp-Session-Id header to thread through.
-        assertThat(init.headers().firstValue("mcp-session-id")).isEmpty();
+        final String sessionId = init.headers().firstValue("mcp-session-id").orElse(null);
+        assertThat(sessionId).as("STREAMABLE transport mints a session id on initialize").isNotBlank();
         assertThat(init.body())
                 .contains("BroadWorks object model (read this first):")
                 .contains("System → Service Provider / Enterprise → Group → User")
@@ -75,6 +75,7 @@ class McpToolsListIntegrationTest {
                         .header("Authorization", "Bearer tok-mcp")
                         .header("Content-Type", "application/json")
                         .header("Accept", "application/json, text/event-stream")
+                        .header("Mcp-Session-Id", sessionId)
                         .POST(HttpRequest.BodyPublishers.ofString(
                                 "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}"))
                         .build(),
@@ -121,6 +122,7 @@ class McpToolsListIntegrationTest {
                         .header("Authorization", "Bearer tok-mcp")
                         .header("Content-Type", "application/json")
                         .header("Accept", "application/json, text/event-stream")
+                        .header("Mcp-Session-Id", sessionId)
                         .POST(HttpRequest.BodyPublishers.ofString(
                                 "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{"
                                         + "\"name\":\"broadworks_get_domain_model\",\"arguments\":{}}}"))

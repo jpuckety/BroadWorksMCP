@@ -1,5 +1,7 @@
 package co.pitayagroup.mcp.broadworks.mcp;
 
+import java.lang.reflect.Method;
+
 import co.pitayagroup.mcp.broadworks.mcp.tools.ConnectionTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.DomainModelTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.GroupTools;
@@ -8,9 +10,8 @@ import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceProviderTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ServiceTools;
 import co.pitayagroup.mcp.broadworks.mcp.tools.UserTools;
 
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.ToolDefinition;
-import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.method.tool.utils.McpJsonSchemaGenerator;
 
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -20,13 +21,11 @@ import tools.jackson.databind.node.ObjectNode;
  * Renders the BroadWorks MCP capability catalogue as spec-compliant MCP {@code tools/list},
  * {@code resources/list} and {@code prompts/list} JSON-RPC responses, entirely offline.
  *
- * <p>It reuses the very same {@link MethodToolCallbackProvider} wiring the application registers in
- * {@code McpToolConfig} (see {@code ToolRegistrationProbeTest}), so the emitted list is authoritative
- * and always in sync with the {@code @Tool}-annotated methods. Because only the tool <em>definitions</em>
- * (name, description, JSON input schema) are needed, the tool beans are constructed with a {@code null}
- * connection factory: no BroadWorks connection, no authentication, and no running server are involved.
- * This makes it safe to invoke right after a deployment to show which capabilities the freshly deployed
- * server exposes.</p>
+ * <p>It reflects every {@code @McpTool} method the annotation scanner exposes at runtime. Because
+ * only the tool <em>definitions</em> (name, description, JSON input schema) are needed, no
+ * BroadWorks connection, authentication, or running server is involved. This makes it safe to
+ * invoke right after a deployment to show which capabilities the freshly deployed server
+ * exposes.</p>
  *
  * <p>The BroadWorks MCP server exposes tools only; it registers no MCP resources or prompts. The
  * {@code resources/list} and {@code prompts/list} responses are therefore spec-compliant but carry
@@ -48,6 +47,16 @@ public final class McpToolsListDumper {
     public static final String DUMP_TOOLS_FLAG = "--dump-tools";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private static final Class<?>[] TOOL_CLASSES = {
+            ConnectionTools.class,
+            ServiceProviderTools.class,
+            GroupTools.class,
+            UserTools.class,
+            ServicePackTools.class,
+            ServiceTools.class,
+            DomainModelTools.class
+    };
 
     private McpToolsListDumper() {
     }
@@ -104,27 +113,34 @@ public final class McpToolsListDumper {
     }
 
     private static ObjectNode toolsListResponse(String serverUrl) {
-        final MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null),
-                        new GroupTools(null), new UserTools(null), new ServicePackTools(null),
-                        new ServiceTools(null), new DomainModelTools())
-                .build();
-
         final ArrayNode tools = MAPPER.createArrayNode();
-        for (ToolCallback callback : provider.getToolCallbacks()) {
-            final ToolDefinition definition = callback.getToolDefinition();
-            final ObjectNode tool = MAPPER.createObjectNode();
-            tool.put("name", definition.name());
-            tool.put("description", definition.description());
-            final String schema = definition.inputSchema();
-            tool.set("inputSchema",
-                    schema == null || schema.isBlank() ? MAPPER.createObjectNode() : MAPPER.readTree(schema));
-            tools.add(tool);
+        for (Class<?> type : TOOL_CLASSES) {
+            addMcpAnnotatedTools(tools, type);
         }
 
         final ObjectNode result = MAPPER.createObjectNode();
         result.set("tools", tools);
         return response(1, result, serverUrl);
+    }
+
+    private static void addMcpAnnotatedTools(ArrayNode tools, Class<?> type) {
+        for (Method method : type.getDeclaredMethods()) {
+            final McpTool annotation = method.getAnnotation(McpTool.class);
+            if (annotation == null) {
+                continue;
+            }
+            final String name = annotation.name().isBlank() ? method.getName() : annotation.name();
+            addTool(tools, name, annotation.description(), McpJsonSchemaGenerator.generateForMethodInput(method));
+        }
+    }
+
+    private static void addTool(ArrayNode tools, String name, String description, String schema) {
+        final ObjectNode tool = MAPPER.createObjectNode();
+        tool.put("name", name);
+        tool.put("description", description == null ? "" : description);
+        tool.set("inputSchema",
+                schema == null || schema.isBlank() ? MAPPER.createObjectNode() : MAPPER.readTree(schema));
+        tools.add(tool);
     }
 
     private static ObjectNode resourcesListResponse(String serverUrl) {

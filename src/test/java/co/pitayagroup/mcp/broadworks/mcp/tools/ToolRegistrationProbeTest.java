@@ -1,31 +1,41 @@
 package co.pitayagroup.mcp.broadworks.mcp.tools;
 
-import java.util.Arrays;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.ai.mcp.annotation.McpTool;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Fast, context-free guard that the same {@link MethodToolCallbackProvider} the application wires in
- * {@code McpToolConfig} discovers every BroadWorks {@code @Tool} method across all tool objects.
+ * Fast, context-free guard that every BroadWorks {@code @McpTool} method the annotation scanner
+ * exposes is present in the offline catalogue.
  */
 class ToolRegistrationProbeTest {
 
+    private static final Class<?>[] TOOL_CLASSES = {
+            ConnectionTools.class,
+            ServiceProviderTools.class,
+            GroupTools.class,
+            UserTools.class,
+            ServicePackTools.class,
+            ServiceTools.class,
+            DomainModelTools.class
+    };
+
     @Test
     void allBroadWorksToolsAreDiscovered() {
-        MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(new ConnectionTools(null), new ServiceProviderTools(null), new GroupTools(null),
-                        new UserTools(null), new ServicePackTools(null), new ServiceTools(null),
-                        new DomainModelTools())
-                .build();
-
-        String[] names = Arrays.stream(provider.getToolCallbacks())
-                .map(ToolCallback::getToolDefinition)
-                .map(def -> def.name())
-                .toArray(String[]::new);
+        final List<String> names = new ArrayList<>();
+        for (Class<?> type : TOOL_CLASSES) {
+            for (Method method : type.getDeclaredMethods()) {
+                final McpTool annotation = method.getAnnotation(McpTool.class);
+                if (annotation != null && !annotation.name().isBlank()) {
+                    names.add(annotation.name());
+                }
+            }
+        }
 
         assertThat(names).containsExactlyInAnyOrder(
                 "broadworks_add_connection",

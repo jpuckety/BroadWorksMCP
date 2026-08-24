@@ -25,8 +25,9 @@ import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.McpToolParam;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.stereotype.Component;
 
 /**
@@ -35,6 +36,10 @@ import org.springframework.stereotype.Component;
  * <p>Every operation runs against the authenticated user's own BroadWorks connection (resolved by
  * {@code subject} via the {@link AlpacaConnectionFactory}); results are mapped to compact DTOs. No
  * credentials or protocol bodies are logged.</p>
+ *
+ * <p>When a client supports MCP elicitation, get/modify/create will pause and request any missing
+ * required identifiers or create fields rather than failing immediately. Optional filters,
+ * pagination, connection {@code resourceId}, and contact/address fields are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -47,7 +52,7 @@ public class ServiceProviderTools {
 
     private final AlpacaConnectionFactory connectionFactory;
 
-    @Tool(name = "broadworks_list_service_providers",
+    @McpTool(name = "broadworks_list_service_providers",
             description = "List (or search) the BroadWorks service providers (and enterprises) accessible to "
                     + "the authenticated user. Pass an optional search value to filter by service provider name. "
                     + "Results are paginated and capped server-side (max "
@@ -55,23 +60,23 @@ public class ServiceProviderTools {
                     + "and inspect has_more/total_matching to know when to stop. Rows are returned in a "
                     + "compact columnar form described by the schema field.")
     public Page listServiceProviders(
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Opaque pagination cursor returned as next_cursor by a previous call; "
                             + "omit to start from the first page")
             String cursor,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Maximum rows to return in this page. Clamped to the server ceiling of "
                             + Paging.MAX_PAGE_LIMIT + "; defaults to " + Paging.DEFAULT_PAGE_LIMIT + " when omitted")
             Integer limit,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional case-insensitive filter matched against the service provider name; "
                             + "omit to list all")
             String search,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "How the search value is matched: STARTSWITH, CONTAINS, or EQUALTO "
                             + "(default CONTAINS). Ignored when search is omitted")
             String searchMode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
         log.debug("tool broadworks_list_service_providers invoked (cursor={}, limit={}, search={}, searchMode={}, "
@@ -127,83 +132,106 @@ public class ServiceProviderTools {
                 "broadworks_list_service_providers", "service providers");
     }
 
-    @Tool(name = "broadworks_get_service_provider",
+    ServiceProviderDetail getServiceProvider(String serviceProviderId, String resourceId) {
+        return getServiceProvider(serviceProviderId, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_get_service_provider",
             description = "Get details for a single BroadWorks service provider by id, including its "
-                    + "support email, contact (name/number/email), and physical address.")
+                    + "support email, contact (name/number/email), and physical address. "
+                    + "If serviceProviderId is omitted and the client supports elicitation, the server will "
+                    + "request it.")
     public ServiceProviderDetail getServiceProvider(
-            @ToolParam(description = "The service provider id") String serviceProviderId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The service provider id") String serviceProviderId,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final String spId = require(ToolElicitation.resolveServiceProviderId(serviceProviderId, requestContext),
+                "serviceProviderId");
         log.debug("tool broadworks_get_service_provider invoked (serviceProviderId={}, resourceId={})",
-                serviceProviderId, resourceId);
+                spId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, serviceProviderId);
+            final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, spId);
             return toDetail(sp);
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_get_service_provider failed for serviceProviderId={}: {}",
-                    serviceProviderId, ex.getMessage());
-            throw new AlpacaException("Service provider not found or not accessible: " + serviceProviderId, ex);
+                    spId, ex.getMessage());
+            throw new AlpacaException("Service provider not found or not accessible: " + spId, ex);
         }
     }
 
-    @Tool(name = "broadworks_modify_service_provider",
+    ServiceProviderDetail modifyServiceProvider(String serviceProviderId, String serviceProviderName,
+            String defaultDomain, String supportEmail, String contactName, String contactNumber,
+            String contactEmail, String addressLine1, String addressLine2, String city,
+            String stateOrProvince, String zipOrPostalCode, String country, String resourceId) {
+        return modifyServiceProvider(serviceProviderId, serviceProviderName, defaultDomain, supportEmail,
+                contactName, contactNumber, contactEmail, addressLine1, addressLine2, city,
+                stateOrProvince, zipOrPostalCode, country, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_modify_service_provider",
             description = "Modify a single BroadWorks service provider. This mutates live BroadWorks data. "
                     + "Only the fields you supply are changed (partial update); omit a field to leave it "
                     + "unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for fields you are "
                     + "not changing — omit them entirely, otherwise BroadWorks may reject the request as "
                     + "invalid. For the clearable fields (supportEmail and each contact/address field) pass "
                     + "an empty string to clear the current value. serviceProviderName and defaultDomain cannot "
-                    + "be cleared and are only changed when a non-blank value is supplied. Returns the refreshed "
-                    + "service provider detail reflecting the applied state.")
+                    + "be cleared and are only changed when a non-blank value is supplied. "
+                    + "If serviceProviderId is omitted and the client supports elicitation, the server will "
+                    + "request it. Returns the refreshed service provider detail reflecting the applied state.")
     public ServiceProviderDetail modifyServiceProvider(
-            @ToolParam(description = "The id of the service provider to modify") String serviceProviderId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The id of the service provider to modify")
+            String serviceProviderId,
+            @McpToolParam(required = false,
                     description = "New display name; omit to leave unchanged (cannot be cleared)")
             String serviceProviderName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "New default domain; omit to leave unchanged (cannot be cleared)")
             String defaultDomain,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "New support email; omit to leave unchanged, pass an empty string to clear")
             String supportEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact person's name; omit to leave unchanged, pass an empty string to clear")
             String contactName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact phone number; omit to leave unchanged, pass an empty string to clear")
             String contactNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact email address; omit to leave unchanged, pass an empty string to clear")
             String contactEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unchanged, pass an empty string to clear")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unchanged, pass an empty string to clear")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unchanged, pass an empty string to clear")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'); omit to leave unchanged, pass an empty string to clear")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unchanged, pass an empty string to clear")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final String spId = require(ToolElicitation.resolveServiceProviderId(serviceProviderId, requestContext),
+                "serviceProviderId");
         log.debug("tool broadworks_modify_service_provider invoked (serviceProviderId={}, resourceId={})",
-                serviceProviderId, resourceId);
+                spId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, serviceProviderId);
+            final ServiceProvider sp = ServiceProvider.getPopulatedServiceProvider(server, spId);
             final ServiceProvider.ServiceProviderModifyRequest request =
                     new ServiceProvider.ServiceProviderModifyRequest(sp);
 
@@ -240,75 +268,91 @@ public class ServiceProviderTools {
             }
 
             final DefaultResponse response = request.fire();
-            AlpacaRequests.ensureSuccess(response, "modify service provider " + serviceProviderId);
+            AlpacaRequests.ensureSuccess(response, "modify service provider " + spId);
 
-            final ServiceProvider updated = ServiceProvider.getPopulatedServiceProvider(server, serviceProviderId);
-            log.debug("tool broadworks_modify_service_provider succeeded (serviceProviderId={})", serviceProviderId);
+            final ServiceProvider updated = ServiceProvider.getPopulatedServiceProvider(server, spId);
+            log.debug("tool broadworks_modify_service_provider succeeded (serviceProviderId={})", spId);
             return toDetail(updated);
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_modify_service_provider failed for serviceProviderId={}: {}",
-                    serviceProviderId, ex.getMessage());
-            throw new AlpacaException("Service provider not found or not accessible: " + serviceProviderId, ex);
+                    spId, ex.getMessage());
+            throw new AlpacaException("Service provider not found or not accessible: " + spId, ex);
         }
     }
 
-    @Tool(name = "broadworks_create_service_provider",
+    ServiceProviderDetail createServiceProvider(String serviceProviderId, String serviceProviderName,
+            String defaultDomain, Boolean enterprise, String supportEmail, String contactName,
+            String contactNumber, String contactEmail, String addressLine1, String addressLine2,
+            String city, String stateOrProvince, String zipOrPostalCode, String country, String resourceId) {
+        return createServiceProvider(serviceProviderId, serviceProviderName, defaultDomain, enterprise,
+                supportEmail, contactName, contactNumber, contactEmail, addressLine1, addressLine2,
+                city, stateOrProvince, zipOrPostalCode, country, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_create_service_provider",
             description = "Create a new BroadWorks service provider (or enterprise). This mutates live "
                     + "BroadWorks data. serviceProviderId, serviceProviderName and defaultDomain are required; "
                     + "set enterprise=true to provision an enterprise instead of a plain service provider "
                     + "(defaults to false). The optional supportEmail, contact (name/number/email) and address "
                     + "fields are only sent when supplied — omit them entirely rather than sending placeholder "
                     + "values such as 'N/A' or '00000', otherwise BroadWorks may reject the request as invalid. "
-                    + "Fails if a service provider with the same id already exists. Returns the newly created "
-                    + "service provider detail.")
+                    + "If those required fields are omitted and the client supports elicitation, the server will "
+                    + "request them. Fails if a service provider with the same id already exists. Returns the "
+                    + "newly created service provider detail.")
     public ServiceProviderDetail createServiceProvider(
-            @ToolParam(description = "The id for the new service provider (must be unique system-wide)")
+            @McpToolParam(required = false,
+                    description = "The id for the new service provider (must be unique system-wide)")
             String serviceProviderId,
-            @ToolParam(description = "The display name for the new service provider") String serviceProviderName,
-            @ToolParam(description = "The default domain for the new service provider") String defaultDomain,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The display name for the new service provider")
+            String serviceProviderName,
+            @McpToolParam(required = false, description = "The default domain for the new service provider")
+            String defaultDomain,
+            @McpToolParam(required = false,
                     description = "Whether to provision an enterprise rather than a plain service provider; "
                             + "defaults to false when omitted")
             Boolean enterprise,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Support email; omit to leave unset")
             String supportEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact person's name; omit to leave unset")
             String contactName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact phone number; omit to leave unset")
             String contactNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact email address; omit to leave unset")
             String contactEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unset")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unset")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unset")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'); omit to leave unset")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unset")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unset")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final CreateServiceProviderDetails details = resolveCreateDetails(
+                serviceProviderId, serviceProviderName, defaultDomain, requestContext);
         log.debug("tool broadworks_create_service_provider invoked (serviceProviderId={}, enterprise={}, "
-                + "resourceId={})", serviceProviderId, enterprise, resourceId);
-        final String spId = require(serviceProviderId, "serviceProviderId");
-        final String spName = require(serviceProviderName, "serviceProviderName");
-        final String domain = require(defaultDomain, "defaultDomain");
+                + "resourceId={})", details.serviceProviderId(), enterprise, resourceId);
+        final String spId = require(details.serviceProviderId(), "serviceProviderId");
+        final String spName = require(details.serviceProviderName(), "serviceProviderName");
+        final String domain = require(details.defaultDomain(), "defaultDomain");
         final BroadWorksServer server = connect(resourceId);
         try {
             final ServiceProvider.ServiceProviderConsolidatedAddRequest request =
@@ -401,5 +445,31 @@ public class ServiceProviderTools {
         final UserInfo user = UserContext.current()
                 .orElseThrow(() -> new AlpacaException("No authenticated user in context"));
         return connectionFactory.connect(user.subject(), resourceId);
+    }
+
+    private static CreateServiceProviderDetails resolveCreateDetails(String serviceProviderId,
+            String serviceProviderName, String defaultDomain, McpSyncRequestContext requestContext) {
+        if ((!ToolElicitation.isBlank(serviceProviderId) && !ToolElicitation.isBlank(serviceProviderName)
+                && !ToolElicitation.isBlank(defaultDomain)) || !ToolElicitation.canElicit(requestContext)) {
+            return new CreateServiceProviderDetails(serviceProviderId, serviceProviderName, defaultDomain);
+        }
+        final CreateServiceProviderDetails elicited = ToolElicitation.elicit(requestContext,
+                "Service provider id, display name, and default domain are required.",
+                CreateServiceProviderDetails.class,
+                "serviceProviderId, serviceProviderName and defaultDomain are required");
+        final CreateServiceProviderDetails merged = new CreateServiceProviderDetails(
+                ToolElicitation.firstNonBlank(serviceProviderId, elicited.serviceProviderId()),
+                ToolElicitation.firstNonBlank(serviceProviderName, elicited.serviceProviderName()),
+                ToolElicitation.firstNonBlank(defaultDomain, elicited.defaultDomain()));
+        log.info("Elicitation accepted for create service provider (serviceProviderId={})",
+                merged.serviceProviderId());
+        return merged;
+    }
+
+    /**
+     * Required create fields the client may supply either as tool arguments or via elicitation.
+     */
+    record CreateServiceProviderDetails(String serviceProviderId, String serviceProviderName,
+            String defaultDomain) {
     }
 }

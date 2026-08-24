@@ -28,8 +28,9 @@ import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.McpToolParam;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.stereotype.Component;
 
 /**
@@ -38,6 +39,10 @@ import org.springframework.stereotype.Component;
  * <p>Operations run against the authenticated user's own BroadWorks connection (resolved by
  * {@code subject}); results are mapped to compact DTOs. No credentials or protocol bodies are
  * logged.</p>
+ *
+ * <p>When a client supports MCP elicitation, get/modify/create will pause and request any missing
+ * required identifiers or create fields rather than failing immediately. Optional filters,
+ * pagination, connection {@code resourceId}, and contact/address fields are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -49,7 +54,7 @@ public class GroupTools {
 
     private final AlpacaConnectionFactory connectionFactory;
 
-    @Tool(name = "broadworks_list_groups",
+    @McpTool(name = "broadworks_list_groups",
             description = "List (or search) BroadWorks groups. When a service provider id is supplied the search "
                     + "is scoped to that service provider; when it is omitted the search spans the entire system "
                     + "(all service providers). Pass an optional search value to filter by group name. Results "
@@ -57,27 +62,27 @@ public class GroupTools {
                     + "returned next_cursor to fetch the next page and inspect has_more/total_matching to know "
                     + "when to stop. Rows are returned in a compact columnar form described by the schema field.")
     public Page listGroups(
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "The service provider id whose groups to list. Omit to search groups across "
                             + "the entire system (all service providers)")
             String serviceProviderId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional case-insensitive filter matched against the group name; omit to "
                             + "list all")
             String search,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "How the search value is matched: STARTSWITH, CONTAINS, or EQUALTO "
                             + "(default CONTAINS). Ignored when search is omitted")
             String searchMode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Opaque pagination cursor returned as next_cursor by a previous call; "
                             + "omit to start from the first page")
             String cursor,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Maximum rows to return in this page. Clamped to the server ceiling of "
                             + Paging.MAX_PAGE_LIMIT + "; defaults to " + Paging.DEFAULT_PAGE_LIMIT + " when omitted")
             Integer limit,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
         log.debug("tool broadworks_list_groups invoked (serviceProviderId={}, search={}, searchMode={}, cursor={}, "
@@ -161,31 +166,53 @@ public class GroupTools {
         return Paging.toPage(GROUP_SCHEMA, rows, offset, pageLimit, "broadworks_list_groups", "groups");
     }
 
-    @Tool(name = "broadworks_get_group",
+    GroupDetail getGroup(String serviceProviderId, String groupId, String resourceId) {
+        return getGroup(serviceProviderId, groupId, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_get_group",
             description = "Get details for a single BroadWorks group within a service provider, including its "
                     + "user count/limit, calling line id (name/number), time zone, location dialing code, "
-                    + "contact (name/number/email), and physical address.")
+                    + "contact (name/number/email), and physical address. "
+                    + "If serviceProviderId or groupId is omitted and the client supports elicitation, the server will "
+                    + "request them.")
     public GroupDetail getGroup(
-            @ToolParam(description = "The service provider id") String serviceProviderId,
-            @ToolParam(description = "The group id") String groupId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The service provider id") String serviceProviderId,
+            @McpToolParam(required = false, description = "The group id") String groupId,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final ToolElicitation.GroupRef ref = ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
+        final String spId = require(ref.serviceProviderId(), "serviceProviderId");
+        final String grpId = require(ref.groupId(), "groupId");
         log.debug("tool broadworks_get_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
-                serviceProviderId, groupId, resourceId);
+                spId, grpId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
-            final Group group = Group.getPopulatedGroup(serviceProvider, groupId);
+            final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
+            final Group group = Group.getPopulatedGroup(serviceProvider, grpId);
             return toDetail(group);
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_get_group failed for serviceProviderId={} groupId={}: {}",
-                    serviceProviderId, groupId, ex.getMessage());
-            throw new AlpacaException("Group not found or not accessible: " + serviceProviderId + "/" + groupId, ex);
+                    spId, grpId, ex.getMessage());
+            throw new AlpacaException("Group not found or not accessible: " + spId + "/" + grpId, ex);
         }
     }
 
-    @Tool(name = "broadworks_modify_group",
+    GroupDetail modifyGroup(String serviceProviderId, String groupId, String groupName,
+            String defaultDomain, Integer userLimit, String callingLineIdName,
+            String callingLineIdPhoneNumber, String timeZone, String locationDialingCode,
+            String contactName, String contactNumber, String contactEmail, String addressLine1,
+            String addressLine2, String city, String stateOrProvince, String zipOrPostalCode,
+            String country, String resourceId) {
+        return modifyGroup(serviceProviderId, groupId, groupName, defaultDomain, userLimit,
+                callingLineIdName, callingLineIdPhoneNumber, timeZone, locationDialingCode,
+                contactName, contactNumber, contactEmail, addressLine1, addressLine2, city,
+                stateOrProvince, zipOrPostalCode, country, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_modify_group",
             description = "Modify a single BroadWorks group within a service provider. This mutates live "
                     + "BroadWorks data. Only the fields you supply are changed (partial update); omit a field "
                     + "to leave it unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for "
@@ -193,73 +220,79 @@ public class GroupTools {
                     + "the request as invalid. For the clearable fields (callingLineIdName, "
                     + "callingLineIdPhoneNumber, locationDialingCode and each contact/address field) pass an "
                     + "empty string to clear the current value. groupName, defaultDomain, timeZone and userLimit "
-                    + "cannot be cleared and are only changed when a value is supplied. Returns the refreshed "
-                    + "group detail reflecting the applied state.")
+                    + "cannot be cleared and are only changed when a value is supplied. "
+                    + "If serviceProviderId or groupId is omitted and the client supports elicitation, the server will "
+                    + "request them. Returns the refreshed group detail reflecting the applied state.")
     public GroupDetail modifyGroup(
-            @ToolParam(description = "The service provider id owning the group") String serviceProviderId,
-            @ToolParam(description = "The id of the group to modify") String groupId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The service provider id owning the group")
+            String serviceProviderId,
+            @McpToolParam(required = false, description = "The id of the group to modify") String groupId,
+            @McpToolParam(required = false,
                     description = "New display name; omit to leave unchanged (cannot be cleared)")
             String groupName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "New default domain; omit to leave unchanged (cannot be cleared)")
             String defaultDomain,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "New user limit; omit to leave unchanged (cannot be cleared)")
             Integer userLimit,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id name; omit to leave unchanged, pass an empty string to clear")
             String callingLineIdName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id phone number; omit to leave unchanged, pass an empty string "
                             + "to clear")
             String callingLineIdPhoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Time zone (e.g. 'America/New_York'); omit to leave unchanged (cannot be "
                             + "cleared)")
             String timeZone,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Location dialing code; omit to leave unchanged, pass an empty string to clear")
             String locationDialingCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact person's name; omit to leave unchanged, pass an empty string to clear")
             String contactName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact phone number; omit to leave unchanged, pass an empty string to clear")
             String contactNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact email address; omit to leave unchanged, pass an empty string to clear")
             String contactEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unchanged, pass an empty string to clear")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unchanged, pass an empty string to clear")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unchanged, pass an empty string to clear")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'), as BroadWorks rejects abbreviations with error 4015 "
                             + "('State or Province not valid'); omit to leave unchanged, pass an empty string "
                             + "to clear")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unchanged, pass an empty string to clear")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final ToolElicitation.GroupRef ref = ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
+        final String spId = require(ref.serviceProviderId(), "serviceProviderId");
+        final String grpId = require(ref.groupId(), "groupId");
         log.debug("tool broadworks_modify_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
-                serviceProviderId, groupId, resourceId);
+                spId, grpId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final ServiceProvider serviceProvider = new ServiceProvider(server, serviceProviderId);
-            final Group group = Group.getPopulatedGroup(serviceProvider, groupId);
+            final ServiceProvider serviceProvider = new ServiceProvider(server, spId);
+            final Group group = Group.getPopulatedGroup(serviceProvider, grpId);
             final Group.GroupModifyRequest request = new Group.GroupModifyRequest(group);
 
             if (isPresent(groupName)) {
@@ -303,87 +336,106 @@ public class GroupTools {
             }
 
             final DefaultResponse response = request.fire();
-            AlpacaRequests.ensureSuccess(response, "modify group " + serviceProviderId + "/" + groupId);
+            AlpacaRequests.ensureSuccess(response, "modify group " + spId + "/" + grpId);
 
-            final Group updated = Group.getPopulatedGroup(serviceProvider, groupId);
+            final Group updated = Group.getPopulatedGroup(serviceProvider, grpId);
             log.debug("tool broadworks_modify_group succeeded (serviceProviderId={}, groupId={})",
-                    serviceProviderId, groupId);
+                    spId, grpId);
             return toDetail(updated);
         } catch (BroadWorksObjectException ex) {
             log.warn("tool broadworks_modify_group failed for serviceProviderId={} groupId={}: {}",
-                    serviceProviderId, groupId, ex.getMessage());
-            throw new AlpacaException("Group not found or not accessible: " + serviceProviderId + "/" + groupId, ex);
+                    spId, grpId, ex.getMessage());
+            throw new AlpacaException("Group not found or not accessible: " + spId + "/" + grpId, ex);
         }
     }
 
-    @Tool(name = "broadworks_create_group",
+    GroupDetail createGroup(String serviceProviderId, String groupId, String groupName,
+            String defaultDomain, Integer userLimit, String timeZone, String callingLineIdName,
+            String locationDialingCode, String contactName, String contactNumber, String contactEmail,
+            String addressLine1, String addressLine2, String city, String stateOrProvince,
+            String zipOrPostalCode, String country, String resourceId) {
+        return createGroup(serviceProviderId, groupId, groupName, defaultDomain, userLimit, timeZone,
+                callingLineIdName, locationDialingCode, contactName, contactNumber, contactEmail,
+                addressLine1, addressLine2, city, stateOrProvince, zipOrPostalCode, country, resourceId,
+                null);
+    }
+
+    @McpTool(name = "broadworks_create_group",
             description = "Create a new BroadWorks group within a service provider. This mutates live "
                     + "BroadWorks data. serviceProviderId, groupId, groupName, defaultDomain and userLimit are "
                     + "required. The optional timeZone, callingLineIdName, locationDialingCode, contact "
                     + "(name/number/email) and address fields are only sent when supplied — omit them entirely "
                     + "rather than sending placeholder values such as 'N/A' or '00000', otherwise BroadWorks may "
-                    + "reject the request as invalid. Fails if a group with the same id already exists in the "
-                    + "service provider. Returns the newly created group detail.")
+                    + "reject the request as invalid. If those required fields are omitted and the client supports "
+                    + "elicitation, the server will request them. Fails if a group with the same id already exists "
+                    + "in the service provider. Returns the newly created group detail.")
     public GroupDetail createGroup(
-            @ToolParam(description = "The service provider id that will own the new group") String serviceProviderId,
-            @ToolParam(description = "The id for the new group (must be unique within the service provider)")
+            @McpToolParam(required = false,
+                    description = "The service provider id that will own the new group") String serviceProviderId,
+            @McpToolParam(required = false,
+                    description = "The id for the new group (must be unique within the service provider)")
             String groupId,
-            @ToolParam(description = "The display name for the new group") String groupName,
-            @ToolParam(description = "The default domain for the new group") String defaultDomain,
-            @ToolParam(description = "The maximum number of users allowed in the new group") Integer userLimit,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The display name for the new group") String groupName,
+            @McpToolParam(required = false, description = "The default domain for the new group") String defaultDomain,
+            @McpToolParam(required = false,
+                    description = "The maximum number of users allowed in the new group") Integer userLimit,
+            @McpToolParam(required = false,
                     description = "Time zone (e.g. 'America/New_York'); omit to leave unset")
             String timeZone,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id name; omit to leave unset")
             String callingLineIdName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Location dialing code; omit to leave unset")
             String locationDialingCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact person's name; omit to leave unset")
             String contactName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact phone number; omit to leave unset")
             String contactNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Contact email address; omit to leave unset")
             String contactEmail,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unset")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unset")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unset")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'); omit to leave unset")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unset")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unset")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final CreateGroupDetails details = resolveCreateDetails(
+                serviceProviderId, groupId, groupName, defaultDomain, userLimit, requestContext);
         log.debug("tool broadworks_create_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
-                serviceProviderId, groupId, resourceId);
-        final String spId = require(serviceProviderId, "serviceProviderId");
-        final String grpId = require(groupId, "groupId");
-        final String grpName = require(groupName, "groupName");
-        final String domain = require(defaultDomain, "defaultDomain");
-        if (userLimit == null) {
+                details.serviceProviderId(), details.groupId(), resourceId);
+        final String spId = require(details.serviceProviderId(), "serviceProviderId");
+        final String grpId = require(details.groupId(), "groupId");
+        final String grpName = require(details.groupName(), "groupName");
+        final String domain = require(details.defaultDomain(), "defaultDomain");
+        if (details.userLimit() == null) {
             throw new AlpacaException("userLimit is required");
         }
+        final Integer limit = details.userLimit();
         final BroadWorksServer server = connect(resourceId);
         try {
             final Group.GroupConsolidatedAddRequest request =
-                    new Group.GroupConsolidatedAddRequest(server, spId, domain, userLimit);
+                    new Group.GroupConsolidatedAddRequest(server, spId, domain, limit);
             request.setGroupId(grpId);
             request.setGroupName(grpName);
             if (isPresent(timeZone)) {
@@ -473,5 +525,35 @@ public class GroupTools {
         final UserInfo user = UserContext.current()
                 .orElseThrow(() -> new AlpacaException("No authenticated user in context"));
         return connectionFactory.connect(user.subject(), resourceId);
+    }
+
+    private static CreateGroupDetails resolveCreateDetails(String serviceProviderId, String groupId,
+            String groupName, String defaultDomain, Integer userLimit,
+            McpSyncRequestContext requestContext) {
+        if ((!ToolElicitation.isBlank(serviceProviderId) && !ToolElicitation.isBlank(groupId)
+                && !ToolElicitation.isBlank(groupName) && !ToolElicitation.isBlank(defaultDomain)
+                && userLimit != null) || !ToolElicitation.canElicit(requestContext)) {
+            return new CreateGroupDetails(serviceProviderId, groupId, groupName, defaultDomain, userLimit);
+        }
+        final CreateGroupDetails elicited = ToolElicitation.elicit(requestContext,
+                "Service provider id, group id, display name, default domain, and user limit are required.",
+                CreateGroupDetails.class,
+                "serviceProviderId, groupId, groupName, defaultDomain and userLimit are required");
+        final CreateGroupDetails merged = new CreateGroupDetails(
+                ToolElicitation.firstNonBlank(serviceProviderId, elicited.serviceProviderId()),
+                ToolElicitation.firstNonBlank(groupId, elicited.groupId()),
+                ToolElicitation.firstNonBlank(groupName, elicited.groupName()),
+                ToolElicitation.firstNonBlank(defaultDomain, elicited.defaultDomain()),
+                ToolElicitation.firstNonNull(userLimit, elicited.userLimit()));
+        log.info("Elicitation accepted for create group (serviceProviderId={}, groupId={})",
+                merged.serviceProviderId(), merged.groupId());
+        return merged;
+    }
+
+    /**
+     * Required create fields the client may supply either as tool arguments or via elicitation.
+     */
+    record CreateGroupDetails(String serviceProviderId, String groupId, String groupName,
+            String defaultDomain, Integer userLimit) {
     }
 }

@@ -450,11 +450,21 @@ export class BroadWorksMcpStack extends cdk.Stack {
     // New logical ID: the live stack still has ApplicationLoadBalancedFargateService
     // 'Service'. Updating that resource to CODE_DEPLOY fails CloudFormation
     // validation (controller, load balancers, and ServiceName cannot change).
+    //
+    // desiredCount is 1 by design. STREAMABLE MCP sessions (Mcp-Session-Id, including
+    // in-flight elicitation) live in process memory on one JVM. ALB stickiness is
+    // cookie-only and native MCP clients typically send no cookies, so a second task
+    // would 404 follow-up /mcp calls that land on the other instance. OAuth / login
+    // sessions stay in DynamoDB and do not need affinity. Do not raise this until an
+    // external MCP session store exists (Spring AI / MCP Java SDK still have no SPI
+    // that reconstructs live SSE / elicit sinks) or a header-hashing proxy pins
+    // Mcp-Session-Id. Blue/green still replaces this task and drops in-memory MCP
+    // sessions; clients must re-initialize.
     this.service = new ecs.FargateService(this, 'BlueGreenService', {
       cluster: this.cluster,
       serviceName: ECS_SERVICE_NAME,
       taskDefinition,
-      desiredCount: 2,
+      desiredCount: 1,
       minHealthyPercent: 0,
       maxHealthyPercent: 200,
       assignPublicIp: false,
@@ -690,7 +700,8 @@ export class BroadWorksMcpStack extends cdk.Stack {
     });
     wafLoggingConfiguration.node.addDependency(wafLogGroup);
 
-    // No ALB session stickiness is required. Multi-instance OAuth is durable in DynamoDB.
+    // No ALB cookie stickiness: OAuth is durable in DynamoDB; STREAMABLE MCP is pinned
+    // by desiredCount: 1 (ALB cannot hash on the Mcp-Session-Id header).
 
     if (hostname && hostedZone) {
       const albAliasTarget = route53.RecordTarget.fromAlias(new route53Targets.LoadBalancerTarget(this.loadBalancer));

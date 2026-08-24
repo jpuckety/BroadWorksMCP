@@ -42,7 +42,7 @@ describe('BroadWorksMcpStack', () => {
 
     template.hasResourceProperties('AWS::ECS::Service', {
       DeploymentController: { Type: 'CODE_DEPLOY' },
-      DesiredCount: 2,
+      DesiredCount: 1,
       LaunchType: 'FARGATE',
       NetworkConfiguration: {
         AwsvpcConfiguration: {

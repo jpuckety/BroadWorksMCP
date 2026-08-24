@@ -32,8 +32,9 @@ import co.ecg.alpaca.toolkit.messaging.response.DefaultResponse;
 import co.ecg.alpaca.toolkit.model.BroadWorksServer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.McpToolParam;
+import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.stereotype.Component;
 
 /**
@@ -43,6 +44,10 @@ import org.springframework.stereotype.Component;
  * <p>Operations run against the authenticated user's own BroadWorks connection (resolved by
  * {@code subject}); results are mapped to compact DTOs. No credentials or protocol bodies are
  * logged.</p>
+ *
+ * <p>When a client supports MCP elicitation, get/modify/create will pause and request any missing
+ * required identifiers or create fields rather than failing immediately. Optional filters,
+ * pagination, connection {@code resourceId}, contact/address fields, and passwords are never elicited.</p>
  */
 @Slf4j
 @Component
@@ -56,7 +61,7 @@ public class UserTools {
 
     private final AlpacaConnectionFactory connectionFactory;
 
-    @Tool(name = "broadworks_list_users",
+    @McpTool(name = "broadworks_list_users",
             description = "List (or search) BroadWorks users. The listing scope is derived from the supplied ids: "
                     + "when both a service provider id and a group id are given the search is scoped to that group; "
                     + "when only a service provider id is given it spans that service provider; when neither is "
@@ -68,42 +73,42 @@ public class UserTools {
                     + "inspect has_more/total_matching to know when to stop. Rows are returned in a compact "
                     + "columnar form described by the schema field.")
     public Page listUsers(
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "The service provider id to scope the listing to. Omit (together with groupId) "
                             + "to search users across the entire system")
             String serviceProviderId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "The group id to scope the listing to. Requires serviceProviderId to also be "
                             + "supplied. Omit to search across the whole service provider or system")
             String groupId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional filter matched against the user's last name")
             String lastName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional filter matched against the user's first name")
             String firstName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional filter matched against the user id")
             String userId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional filter matched against the user's phone number")
             String phoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional filter matched against the user's email address")
             String emailAddress,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "How the search values are matched: STARTSWITH, CONTAINS, or EQUALTO "
                             + "(default CONTAINS). Applies to all supplied search fields")
             String searchMode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Opaque pagination cursor returned as next_cursor by a previous call; "
                             + "omit to start from the first page")
             String cursor,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Maximum rows to return in this page. Clamped to the server ceiling of "
                             + Paging.MAX_PAGE_LIMIT + "; defaults to " + Paging.DEFAULT_PAGE_LIMIT + " when omitted")
             Integer limit,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId) {
         log.debug("tool broadworks_list_users invoked (serviceProviderId={}, groupId={}, lastName={}, firstName={}, "
@@ -293,27 +298,45 @@ public class UserTools {
         return Paging.toPage(USER_SCHEMA, rows, offset, pageLimit, "broadworks_list_users", "users");
     }
 
-    @Tool(name = "broadworks_get_user",
+    UserDetail getUser(String userId, String resourceId) {
+        return getUser(userId, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_get_user",
             description = "Get details for a single BroadWorks user by their (system-unique) user id, including "
                     + "their group and service provider, name, phone number/extension, email, department, title, "
-                    + "mobile number, time zone, language, calling line id (name/number), and physical address.")
+                    + "mobile number, time zone, language, calling line id (name/number), and physical address. "
+                    + "If userId is omitted and the client supports elicitation, the server will request it.")
     public UserDetail getUser(
-            @ToolParam(description = "The (system-unique) user id") String userId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The (system-unique) user id") String userId,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
-        log.debug("tool broadworks_get_user invoked (userId={}, resourceId={})", userId, resourceId);
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
+        log.debug("tool broadworks_get_user invoked (userId={}, resourceId={})", uId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final User user = User.getPopulatedUser(server, userId);
+            final User user = User.getPopulatedUser(server, uId);
             return toDetail(user);
         } catch (BroadWorksObjectException ex) {
-            log.warn("tool broadworks_get_user failed for userId={}: {}", userId, ex.getMessage());
-            throw new AlpacaException("User not found or not accessible: " + userId, ex);
+            log.warn("tool broadworks_get_user failed for userId={}: {}", uId, ex.getMessage());
+            throw new AlpacaException("User not found or not accessible: " + uId, ex);
         }
     }
 
-    @Tool(name = "broadworks_modify_user",
+    UserDetail modifyUser(String userId, String firstName, String lastName, String phoneNumber,
+            String extension, String emailAddress, String title, String mobilePhoneNumber,
+            String timeZone, String language, String callingLineIdFirstName, String callingLineIdLastName,
+            String callingLineIdPhoneNumber, String addressLine1, String addressLine2, String city,
+            String stateOrProvince, String zipOrPostalCode, String country, String resourceId) {
+        return modifyUser(userId, firstName, lastName, phoneNumber, extension, emailAddress, title,
+                mobilePhoneNumber, timeZone, language, callingLineIdFirstName, callingLineIdLastName,
+                callingLineIdPhoneNumber, addressLine1, addressLine2, city, stateOrProvince,
+                zipOrPostalCode, country, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_modify_user",
             description = "Modify a single BroadWorks user by their (system-unique) user id. This mutates live "
                     + "BroadWorks data. Only the fields you supply are changed (partial update); omit a field "
                     + "to leave it unchanged. Do NOT send placeholder values such as 'N/A' or '00000' for "
@@ -323,75 +346,79 @@ public class UserTools {
                     + "string to clear the current value. firstName, lastName, timeZone, language, "
                     + "callingLineIdFirstName and callingLineIdLastName cannot be cleared and are only changed "
                     + "when a non-blank value is supplied. Passwords are intentionally not editable through this "
-                    + "tool. Returns the refreshed user detail reflecting the applied state.")
+                    + "tool. If userId is omitted and the client supports elicitation, the server will request it. "
+                    + "Returns the refreshed user detail reflecting the applied state.")
     public UserDetail modifyUser(
-            @ToolParam(description = "The (system-unique) id of the user to modify") String userId,
-            @ToolParam(required = false,
+            @McpToolParam(required = false, description = "The (system-unique) id of the user to modify")
+            String userId,
+            @McpToolParam(required = false,
                     description = "First name; omit to leave unchanged (cannot be cleared)")
             String firstName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Last name; omit to leave unchanged (cannot be cleared)")
             String lastName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Phone number; omit to leave unchanged, pass an empty string to clear")
             String phoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Extension; omit to leave unchanged, pass an empty string to clear")
             String extension,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Email address; omit to leave unchanged, pass an empty string to clear")
             String emailAddress,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Title; omit to leave unchanged, pass an empty string to clear")
             String title,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Mobile phone number; omit to leave unchanged, pass an empty string to clear")
             String mobilePhoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Time zone (e.g. 'America/New_York'); omit to leave unchanged (cannot be "
                             + "cleared)")
             String timeZone,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Language; omit to leave unchanged (cannot be cleared)")
             String language,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id first name; omit to leave unchanged (cannot be cleared)")
             String callingLineIdFirstName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id last name; omit to leave unchanged (cannot be cleared)")
             String callingLineIdLastName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id phone number; omit to leave unchanged, pass an empty string "
                             + "to clear")
             String callingLineIdPhoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unchanged, pass an empty string to clear")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unchanged, pass an empty string to clear")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unchanged, pass an empty string to clear")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'), as BroadWorks rejects abbreviations with error 4015 "
                             + "('State or Province not valid'); omit to leave unchanged, pass an empty string "
                             + "to clear")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unchanged, pass an empty string to clear")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unchanged, pass an empty string to clear")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
-        log.debug("tool broadworks_modify_user invoked (userId={}, resourceId={})", userId, resourceId);
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
+        log.debug("tool broadworks_modify_user invoked (userId={}, resourceId={})", uId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {
-            final User user = User.getPopulatedUser(server, userId);
+            final User user = User.getPopulatedUser(server, uId);
             final User.UserModifyRequest request = new User.UserModifyRequest(user);
 
             if (isPresent(firstName)) {
@@ -436,95 +463,118 @@ public class UserTools {
             }
 
             final DefaultResponse response = request.fire();
-            AlpacaRequests.ensureSuccess(response, "modify user " + userId);
+            AlpacaRequests.ensureSuccess(response, "modify user " + uId);
 
-            final User updated = User.getPopulatedUser(server, userId);
-            log.debug("tool broadworks_modify_user succeeded (userId={})", userId);
+            final User updated = User.getPopulatedUser(server, uId);
+            log.debug("tool broadworks_modify_user succeeded (userId={})", uId);
             return toDetail(updated);
         } catch (BroadWorksObjectException ex) {
-            log.warn("tool broadworks_modify_user failed for userId={}: {}", userId, ex.getMessage());
-            throw new AlpacaException("User not found or not accessible: " + userId, ex);
+            log.warn("tool broadworks_modify_user failed for userId={}: {}", uId, ex.getMessage());
+            throw new AlpacaException("User not found or not accessible: " + uId, ex);
         }
     }
 
-    @Tool(name = "broadworks_create_user",
+    UserDetail createUser(String serviceProviderId, String groupId, String userId, String firstName,
+            String lastName, String callingLineIdFirstName, String callingLineIdLastName, String password,
+            String phoneNumber, String extension, String emailAddress, String title,
+            String mobilePhoneNumber, String timeZone, String language, String callingLineIdPhoneNumber,
+            String addressLine1, String addressLine2, String city, String stateOrProvince,
+            String zipOrPostalCode, String country, String resourceId) {
+        return createUser(serviceProviderId, groupId, userId, firstName, lastName, callingLineIdFirstName,
+                callingLineIdLastName, password, phoneNumber, extension, emailAddress, title,
+                mobilePhoneNumber, timeZone, language, callingLineIdPhoneNumber, addressLine1,
+                addressLine2, city, stateOrProvince, zipOrPostalCode, country, resourceId, null);
+    }
+
+    @McpTool(name = "broadworks_create_user",
             description = "Create a new BroadWorks user within a group. This mutates live BroadWorks data. "
                     + "serviceProviderId, groupId, userId, firstName and lastName are required. "
                     + "callingLineIdFirstName and callingLineIdLastName default to firstName and lastName when "
                     + "omitted. Supplying a password is strongly recommended (BroadWorks may reject the user or "
-                    + "leave it unusable without one). All other fields (phoneNumber, extension, emailAddress, "
+                    + "leave it unusable without one); the password is never elicited. All other fields "
+                    + "(phoneNumber, extension, emailAddress, "
                     + "title, mobilePhoneNumber, timeZone, language, callingLineIdPhoneNumber and each address "
                     + "field) are only sent when supplied — omit them entirely rather than sending placeholder "
                     + "values such as 'N/A' or '00000', otherwise BroadWorks may reject the request as invalid. "
-                    + "Fails if a user with the same id already exists. Returns the newly created user detail.")
+                    + "If those required fields are omitted and the client supports elicitation, the server will "
+                    + "request them. Fails if a user with the same id already exists. Returns the newly created "
+                    + "user detail.")
     public UserDetail createUser(
-            @ToolParam(description = "The service provider id that owns the target group") String serviceProviderId,
-            @ToolParam(description = "The group id the new user will belong to") String groupId,
-            @ToolParam(description = "The id for the new user (must be unique system-wide)") String userId,
-            @ToolParam(description = "First name") String firstName,
-            @ToolParam(description = "Last name") String lastName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
+                    description = "The service provider id that owns the target group")
+            String serviceProviderId,
+            @McpToolParam(required = false, description = "The group id the new user will belong to")
+            String groupId,
+            @McpToolParam(required = false,
+                    description = "The id for the new user (must be unique system-wide)")
+            String userId,
+            @McpToolParam(required = false, description = "First name") String firstName,
+            @McpToolParam(required = false, description = "Last name") String lastName,
+            @McpToolParam(required = false,
                     description = "Calling line id first name; defaults to firstName when omitted")
             String callingLineIdFirstName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id last name; defaults to lastName when omitted")
             String callingLineIdLastName,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Initial password for the new user; strongly recommended")
             String password,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Phone number; omit to leave unset")
             String phoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Extension; omit to leave unset")
             String extension,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Email address; omit to leave unset")
             String emailAddress,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Title; omit to leave unset")
             String title,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Mobile phone number; omit to leave unset")
             String mobilePhoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Time zone (e.g. 'America/New_York'); omit to leave unset")
             String timeZone,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Language; omit to leave unset")
             String language,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Calling line id phone number; omit to leave unset")
             String callingLineIdPhoneNumber,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 1; omit to leave unset")
             String addressLine1,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Address line 2; omit to leave unset")
             String addressLine2,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "City; omit to leave unset")
             String city,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "State or province; use the full name (e.g. 'Georgia'), not the two-letter "
                             + "abbreviation (e.g. 'GA'); omit to leave unset")
             String stateOrProvince,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "ZIP or postal code; omit to leave unset")
             String zipOrPostalCode,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Country; omit to leave unset")
             String country,
-            @ToolParam(required = false,
+            @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
-            String resourceId) {
+            String resourceId,
+            McpSyncRequestContext requestContext) {
+        final CreateUserDetails details = resolveCreateDetails(
+                serviceProviderId, groupId, userId, firstName, lastName, requestContext);
         log.debug("tool broadworks_create_user invoked (serviceProviderId={}, groupId={}, userId={}, resourceId={})",
-                serviceProviderId, groupId, userId, resourceId);
-        final String spId = require(serviceProviderId, "serviceProviderId");
-        final String grpId = require(groupId, "groupId");
-        final String uId = require(userId, "userId");
-        final String first = require(firstName, "firstName");
-        final String last = require(lastName, "lastName");
+                details.serviceProviderId(), details.groupId(), details.userId(), resourceId);
+        final String spId = require(details.serviceProviderId(), "serviceProviderId");
+        final String grpId = require(details.groupId(), "groupId");
+        final String uId = require(details.userId(), "userId");
+        final String first = require(details.firstName(), "firstName");
+        final String last = require(details.lastName(), "lastName");
         final String clidFirst = isPresent(callingLineIdFirstName) ? callingLineIdFirstName.trim() : first;
         final String clidLast = isPresent(callingLineIdLastName) ? callingLineIdLastName.trim() : last;
         final BroadWorksServer server = connect(resourceId);
@@ -623,5 +673,34 @@ public class UserTools {
         final UserInfo user = UserContext.current()
                 .orElseThrow(() -> new AlpacaException("No authenticated user in context"));
         return connectionFactory.connect(user.subject(), resourceId);
+    }
+
+    private static CreateUserDetails resolveCreateDetails(String serviceProviderId, String groupId,
+            String userId, String firstName, String lastName, McpSyncRequestContext requestContext) {
+        if ((!ToolElicitation.isBlank(serviceProviderId) && !ToolElicitation.isBlank(groupId)
+                && !ToolElicitation.isBlank(userId) && !ToolElicitation.isBlank(firstName)
+                && !ToolElicitation.isBlank(lastName)) || !ToolElicitation.canElicit(requestContext)) {
+            return new CreateUserDetails(serviceProviderId, groupId, userId, firstName, lastName);
+        }
+        final CreateUserDetails elicited = ToolElicitation.elicit(requestContext,
+                "Service provider id, group id, user id, first name, and last name are required.",
+                CreateUserDetails.class,
+                "serviceProviderId, groupId, userId, firstName and lastName are required");
+        final CreateUserDetails merged = new CreateUserDetails(
+                ToolElicitation.firstNonBlank(serviceProviderId, elicited.serviceProviderId()),
+                ToolElicitation.firstNonBlank(groupId, elicited.groupId()),
+                ToolElicitation.firstNonBlank(userId, elicited.userId()),
+                ToolElicitation.firstNonBlank(firstName, elicited.firstName()),
+                ToolElicitation.firstNonBlank(lastName, elicited.lastName()));
+        log.info("Elicitation accepted for create user (userId={})", merged.userId());
+        return merged;
+    }
+
+    /**
+     * Required create fields the client may supply either as tool arguments or via elicitation.
+     * Password is intentionally excluded and is never elicited.
+     */
+    record CreateUserDetails(String serviceProviderId, String groupId, String userId, String firstName,
+            String lastName) {
     }
 }

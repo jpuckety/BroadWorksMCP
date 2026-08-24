@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Verifies {@link McpToolsListDumper} emits well-formed, spec-compliant MCP {@code tools/list},
  * {@code resources/list} and {@code prompts/list} JSON-RPC responses covering every BroadWorks
- * {@code @Tool}, entirely offline (no server, no auth).
+ * {@code @McpTool}, entirely offline (no server, no auth).
  */
 class McpToolsListDumperTest {
 

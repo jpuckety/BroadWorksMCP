@@ -1,15 +1,13 @@
 package co.pitayagroup.mcp.broadworks.mcp.tools;
 
-import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.stereotype.Component;
 
 /**
  * Read-only MCP tool that returns a concise BroadWorks object-model reference for agents.
  *
- * <p>This does not call BroadWorks. Spring AI's {@code @Tool} has no {@code readOnlyHint}
- * attribute; the live MCP converter also does not copy tool annotations from
- * {@code ToolCallback}s. The description and returned text both state that the tool is a
- * static reference.</p>
+ * <p>This does not call BroadWorks and has no required parameters, so it does not elicit.
+ * The description and returned text both state that the tool is a static reference.</p>
  */
 @Component
 public class DomainModelTools {
@@ -55,7 +53,7 @@ public class DomainModelTools {
             - Connection tools manage this MCP user's saved servers, not BroadWorks hierarchy objects.
             """;
 
-    @Tool(name = "broadworks_get_domain_model", description = DESCRIPTION)
+    @McpTool(name = "broadworks_get_domain_model", description = DESCRIPTION)
     public String getDomainModel() {
         return DOMAIN_MODEL;
     }
