@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { ApprovalComponent } from './approval.component';
 import { ConnectionFormComponent } from './connection-form.component';
 import { ConnectionsListComponent } from './connections-list.component';
 import { SetPasswordComponent } from './set-password.component';
@@ -10,6 +11,7 @@ import { SetPasswordComponent } from './set-password.component';
 export const routes: Routes = [
   { path: '', component: ConnectionsListComponent },
   { path: 'new', component: ConnectionFormComponent },
+  { path: 'approvals/:id', component: ApprovalComponent },
   { path: ':id/edit', component: ConnectionFormComponent },
   { path: ':id/password', component: SetPasswordComponent },
   { path: '**', redirectTo: '' }

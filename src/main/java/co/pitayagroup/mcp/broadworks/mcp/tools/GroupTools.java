@@ -8,6 +8,7 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.approval.ConfirmationService;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.GroupSummary;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
@@ -42,8 +43,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>When a client supports MCP elicitation, get/modify/create/delete will pause and request any
  * missing required identifiers or create fields rather than failing immediately. Optional filters,
- * pagination, connection {@code resourceId}, contact/address fields, and the delete
- * {@code areYouSure} flag are never elicited.</p>
+ * pagination, connection {@code resourceId}, and contact/address fields are never elicited.
+ * Deletes confirm in the portal when the client supports URL elicitation;
+ * {@code areYouSure=true} is only for clients without that capability.</p>
  */
 @Slf4j
 @Component
@@ -54,6 +56,7 @@ public class GroupTools {
     static final List<String> GROUP_SCHEMA = List.of("groupId", "groupName", "userLimit");
 
     private final AlpacaConnectionFactory connectionFactory;
+    private final ConfirmationService confirmationService;
 
     @McpTool(name = "broadworks_list_groups",
             description = "List (or search) BroadWorks groups. When a service provider id is supplied the search "
@@ -499,12 +502,11 @@ public class GroupTools {
     @McpTool(name = "broadworks_delete_group",
             description = "Delete a BroadWorks group within a service provider. This mutates live "
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the group "
-                    + "still contains users. This is a two-step operation: first call without areYouSure "
-                    + "(or with areYouSure=false) to receive a confirmation prompt; then call again with "
-                    + "areYouSure=true to proceed. If the client supports elicitation, confirmation is "
-                    + "requested in-band instead of requiring a second call. "
-                    + "If serviceProviderId or groupId is omitted and the client supports elicitation, the "
-                    + "server will request them. Returns a short confirmation message.",
+                    + "still contains users. URL-capable MCP clients always receive a portal confirmation "
+                    + "page that a human must Confirm; the agent cannot approve the delete. Clients without "
+                    + "URL elicitation must pass areYouSure=true or the call is refused with no BroadWorks "
+                    + "change. If serviceProviderId or groupId is omitted and the client supports elicitation, "
+                    + "the server will request them. Returns a short confirmation message.",
             annotations = @McpTool.McpAnnotations(destructiveHint = true))
     public String deleteGroup(
             @McpToolParam(required = false,
@@ -513,8 +515,9 @@ public class GroupTools {
             @McpToolParam(required = false, description = "The id of the group to delete")
             String groupId,
             @McpToolParam(required = false,
-                    description = "Must be true to actually delete. Call first without this (or with false) "
-                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+                    description = "Required only for clients that cannot do URL elicitation. URL-capable "
+                            + "clients always get a portal prompt and this flag is ignored. Set true to confirm "
+                            + "the delete when the client has no URL elicitation")
             Boolean areYouSure,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
@@ -524,7 +527,7 @@ public class GroupTools {
                 ToolElicitation.resolveGroupRef(serviceProviderId, groupId, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String grpId = require(ref.groupId(), "groupId");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete group '" + spId + "/" + grpId + "'",
+        confirmationService.requireAreYouSure(areYouSure, "delete group '" + spId + "/" + grpId + "'",
                 requestContext);
         log.debug("tool broadworks_delete_group invoked (serviceProviderId={}, groupId={}, resourceId={})",
                 spId, grpId, resourceId);

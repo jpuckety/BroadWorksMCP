@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import java.util.Map;
 
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
-import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.AreYouSure;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.GroupRef;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServicePackRef;
 import co.pitayagroup.mcp.broadworks.mcp.tools.ToolElicitation.ServiceProviderId;
@@ -103,62 +102,5 @@ class ToolElicitationTest {
         assertThat(ToolElicitation.firstNonBlank("  ", "elicited")).isEqualTo("elicited");
         assertThat(ToolElicitation.firstNonNull(5, 9)).isEqualTo(5);
         assertThat(ToolElicitation.firstNonNull(null, 9)).isEqualTo(9);
-    }
-
-    @Test
-    void requireAreYouSureAcceptsOnlyTrueWithoutElicitation() {
-        ToolElicitation.requireAreYouSure(true, "delete service provider 'sp-1'", null);
-
-        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(null, "delete service provider 'sp-1'", null))
-                .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("Are you sure")
-                .hasMessageContaining("areYouSure=true")
-                .hasMessageContaining("No changes were made");
-        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(false, "delete user 'u-1'", null))
-                .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("delete user 'u-1'");
-        verify(requestContext, never()).elicit(any(), eq(AreYouSure.class));
-    }
-
-    @Test
-    void requireAreYouSureSkipsElicitWhenAlreadyTrue() {
-        ToolElicitation.requireAreYouSure(true, "delete user 'u-1'", requestContext);
-
-        verify(requestContext, never()).elicitEnabled();
-        verify(requestContext, never()).elicit(any(), eq(AreYouSure.class));
-    }
-
-    @Test
-    void requireAreYouSureAcceptsElicitedConfirmation() {
-        when(requestContext.elicitEnabled()).thenReturn(true);
-        when(requestContext.elicit(any(), eq(AreYouSure.class)))
-                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
-                        new AreYouSure(true), Map.of()));
-
-        ToolElicitation.requireAreYouSure(null, "delete user 'u-1'", requestContext);
-        ToolElicitation.requireAreYouSure(false, "delete user 'u-1'", requestContext);
-    }
-
-    @Test
-    void requireAreYouSureThrowsWhenElicitedConfirmationIsFalse() {
-        when(requestContext.elicitEnabled()).thenReturn(true);
-        when(requestContext.elicit(any(), eq(AreYouSure.class)))
-                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
-                        new AreYouSure(false), Map.of()));
-
-        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(null, "delete user 'u-1'", requestContext))
-                .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("areYouSure=true");
-    }
-
-    @Test
-    void requireAreYouSureThrowsWhenElicitationDeclined() {
-        when(requestContext.elicitEnabled()).thenReturn(true);
-        when(requestContext.elicit(any(), eq(AreYouSure.class)))
-                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.DECLINE, null, Map.of()));
-
-        assertThatThrownBy(() -> ToolElicitation.requireAreYouSure(false, "delete user 'u-1'", requestContext))
-                .isInstanceOf(AlpacaException.class)
-                .hasMessageContaining("No changes were made");
     }
 }

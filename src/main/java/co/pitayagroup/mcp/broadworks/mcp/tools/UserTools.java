@@ -8,6 +8,7 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.approval.ConfirmationService;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
 import co.pitayagroup.mcp.broadworks.mcp.model.UserDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.UserSummary;
@@ -47,8 +48,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>When a client supports MCP elicitation, get/modify/create/delete will pause and request any
  * missing required identifiers or create fields rather than failing immediately. Optional filters,
- * pagination, connection {@code resourceId}, contact/address fields, passwords, and the delete
- * {@code areYouSure} flag are never elicited.</p>
+ * pagination, connection {@code resourceId}, contact/address fields, and passwords are never
+ * elicited. Deletes confirm in the portal when the client supports URL elicitation;
+ * {@code areYouSure=true} is only for clients without that capability.</p>
  */
 @Slf4j
 @Component
@@ -61,6 +63,7 @@ public class UserTools {
             "phoneNumber", "extension", "emailAddress");
 
     private final AlpacaConnectionFactory connectionFactory;
+    private final ConfirmationService confirmationService;
 
     @McpTool(name = "broadworks_list_users",
             description = "List (or search) BroadWorks users. The listing scope is derived from the supplied ids: "
@@ -641,10 +644,10 @@ public class UserTools {
 
     @McpTool(name = "broadworks_delete_user",
             description = "Delete a BroadWorks user by their (system-unique) user id. This mutates live "
-                    + "BroadWorks data and is irreversible. This is a two-step operation: first call without "
-                    + "areYouSure (or with areYouSure=false) to receive a confirmation prompt; then call again "
-                    + "with areYouSure=true to proceed. If the client supports elicitation, confirmation is "
-                    + "requested in-band instead of requiring a second call. "
+                    + "BroadWorks data and is irreversible. URL-capable MCP clients always receive a portal "
+                    + "confirmation page that a human must Confirm; the agent cannot approve the delete. "
+                    + "Clients without URL elicitation must pass areYouSure=true or the call is refused with "
+                    + "no BroadWorks change. "
                     + "If userId is omitted and the client supports elicitation, the server will request it. "
                     + "Returns a short confirmation message.",
             annotations = @McpTool.McpAnnotations(destructiveHint = true))
@@ -652,15 +655,16 @@ public class UserTools {
             @McpToolParam(required = false, description = "The (system-unique) id of the user to delete")
             String userId,
             @McpToolParam(required = false,
-                    description = "Must be true to actually delete. Call first without this (or with false) "
-                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+                    description = "Required only for clients that cannot do URL elicitation. URL-capable "
+                            + "clients always get a portal prompt and this flag is ignored. Set true to confirm "
+                            + "the delete when the client has no URL elicitation")
             Boolean areYouSure,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
             String resourceId,
             McpSyncRequestContext requestContext) {
         final String uId = require(ToolElicitation.resolveUserId(userId, requestContext), "userId");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete user '" + uId + "'", requestContext);
+        confirmationService.requireAreYouSure(areYouSure, "delete user '" + uId + "'", requestContext);
         log.debug("tool broadworks_delete_user invoked (userId={}, resourceId={})", uId, resourceId);
         final BroadWorksServer server = connect(resourceId);
         try {

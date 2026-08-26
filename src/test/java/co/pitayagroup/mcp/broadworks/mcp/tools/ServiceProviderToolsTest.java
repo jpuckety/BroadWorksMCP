@@ -18,8 +18,11 @@ import java.util.Map;
 import java.util.Optional;
 
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
+import co.pitayagroup.mcp.broadworks.config.PublicBaseUrlProperties;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.approval.ConfirmationService;
+import co.pitayagroup.mcp.broadworks.mcp.approval.InMemoryPendingApprovalStore;
 import co.pitayagroup.mcp.broadworks.mcp.model.AddressInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.ContactInfo;
 import co.pitayagroup.mcp.broadworks.mcp.model.Page;
@@ -64,7 +67,8 @@ class ServiceProviderToolsTest {
     @BeforeEach
     void setUp() {
         connectionFactory = mock(AlpacaConnectionFactory.class);
-        tools = new ServiceProviderTools(connectionFactory);
+        tools = new ServiceProviderTools(connectionFactory, new ConfirmationService(
+                new InMemoryPendingApprovalStore(), new PublicBaseUrlProperties("")));
         authenticateAs("sub-1", "user@example.com");
     }
 

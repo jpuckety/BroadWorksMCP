@@ -38,18 +38,18 @@ accepted by, returned from, or logged by any tool.
 | [`broadworks_flush_cache`](#broadworks_flush_cache) | Flush the Alpaca OCI response cache for the current connection. | `CacheFlushResult` |
 | [`broadworks_list_service_providers`](#broadworks_list_service_providers) | List / search service providers and enterprises. | `Page` |
 | [`broadworks_get_service_provider`](#broadworks_get_service_provider) | Get a single service provider by id. | `ServiceProviderDetail` |
-| [`broadworks_delete_service_provider`](#broadworks_delete_service_provider) | Delete a service provider (mutates live data; two-step `areYouSure`). | `string` |
+| [`broadworks_delete_service_provider`](#broadworks_delete_service_provider) | Delete a service provider (mutates live data; URL-first portal confirmation). | `string` |
 | [`broadworks_list_groups`](#broadworks_list_groups) | List / search groups (per service provider or system-wide). | `Page` |
 | [`broadworks_get_group`](#broadworks_get_group) | Get a single group by id. | `GroupDetail` |
-| [`broadworks_delete_group`](#broadworks_delete_group) | Delete a group (mutates live data; two-step `areYouSure`). | `string` |
+| [`broadworks_delete_group`](#broadworks_delete_group) | Delete a group (mutates live data; URL-first portal confirmation). | `string` |
 | [`broadworks_list_users`](#broadworks_list_users) | List / search users (per group, service provider, or system-wide). | `Page` |
 | [`broadworks_get_user`](#broadworks_get_user) | Get a single user by id. | `UserDetail` |
-| [`broadworks_delete_user`](#broadworks_delete_user) | Delete a user (mutates live data; two-step `areYouSure`). | `string` |
+| [`broadworks_delete_user`](#broadworks_delete_user) | Delete a user (mutates live data; URL-first portal confirmation). | `string` |
 | [`broadworks_list_service_packs`](#broadworks_list_service_packs) | List the service packs defined on a service provider. | `array` of `ServicePackSummary` |
 | [`broadworks_get_service_pack`](#broadworks_get_service_pack) | Get a single service pack's detail. | `ServicePackDetail` |
 | [`broadworks_create_service_pack`](#broadworks_create_service_pack) | Create a service pack (mutates live data). | `ServicePackDetail` |
 | [`broadworks_modify_service_pack`](#broadworks_modify_service_pack) | Modify a service pack; add-only for services (mutates live data). | `ServicePackDetail` |
-| [`broadworks_delete_service_pack`](#broadworks_delete_service_pack) | Delete a service pack (mutates live data; two-step `areYouSure`). | `string` |
+| [`broadworks_delete_service_pack`](#broadworks_delete_service_pack) | Delete a service pack (mutates live data; URL-first portal confirmation). | `string` |
 | [`broadworks_get_service_provider_service_authorization`](#broadworks_get_service_provider_service_authorization) | Get a service provider's user/group service authorization. | `ServiceAuthorizationSet` |
 | [`broadworks_modify_service_provider_service_authorization`](#broadworks_modify_service_provider_service_authorization) | Modify a service provider's service authorization (mutates live data). | `ServiceAuthorizationSet` |
 | [`broadworks_get_group_service_authorization`](#broadworks_get_group_service_authorization) | Get a group's service-pack/group/user service authorization. | `ServiceAuthorizationSet` |
@@ -172,15 +172,14 @@ Get details for a single BroadWorks service provider by id.
 Delete a BroadWorks service provider (or enterprise). **Mutates live BroadWorks data and is
 irreversible.** BroadWorks may reject the deletion if the service provider still contains groups.
 
-This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-prompts for confirmation (via elicitation when the client supports it, otherwise as an
-"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
-does not complete elicitation.
+URL-capable MCP clients always open a portal confirmation page that a human must Confirm or
+Deny; the agent cannot approve the delete, and `areYouSure` is ignored. Clients without URL
+elicitation must pass `areYouSure=true` or the call is refused with no BroadWorks change.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `serviceProviderId` | `string` | required | The id of the service provider to delete. |
-| `areYouSure` | `boolean` | required to delete | Must be `true` to actually delete. Omit or pass `false` to receive the confirmation prompt. |
+| `areYouSure` | `boolean` | fallback only | Required only when the client cannot do URL elicitation. URL-capable clients always get a portal prompt and this flag is ignored. Set `true` to confirm the delete when the client has no URL elicitation. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
 
 **Returns:** a `string` confirmation message, e.g. `Deleted service provider '<id>'`.
@@ -235,16 +234,15 @@ Get details for a single BroadWorks group within a service provider.
 Delete a BroadWorks group within a service provider. **Mutates live BroadWorks data and is
 irreversible.** BroadWorks may reject the deletion if the group still contains users.
 
-This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-prompts for confirmation (via elicitation when the client supports it, otherwise as an
-"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
-does not complete elicitation.
+URL-capable MCP clients always open a portal confirmation page that a human must Confirm or
+Deny; the agent cannot approve the delete, and `areYouSure` is ignored. Clients without URL
+elicitation must pass `areYouSure=true` or the call is refused with no BroadWorks change.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `serviceProviderId` | `string` | required | The service provider id that owns the group. |
 | `groupId` | `string` | required | The id of the group to delete. |
-| `areYouSure` | `boolean` | required to delete | Must be `true` to actually delete. Omit or pass `false` to receive the confirmation prompt. |
+| `areYouSure` | `boolean` | fallback only | Required only when the client cannot do URL elicitation. URL-capable clients always get a portal prompt and this flag is ignored. Set `true` to confirm the delete when the client has no URL elicitation. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
 
 **Returns:** a `string` confirmation message, e.g. `Deleted group '<groupId>' from service provider <id>`.
@@ -311,15 +309,14 @@ Get details for a single BroadWorks user by their (system-unique) user id.
 Delete a BroadWorks user by their (system-unique) user id. **Mutates live BroadWorks data and is
 irreversible.**
 
-This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-prompts for confirmation (via elicitation when the client supports it, otherwise as an
-"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
-does not complete elicitation.
+URL-capable MCP clients always open a portal confirmation page that a human must Confirm or
+Deny; the agent cannot approve the delete, and `areYouSure` is ignored. Clients without URL
+elicitation must pass `areYouSure=true` or the call is refused with no BroadWorks change.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `userId` | `string` | required | The (system-unique) id of the user to delete. |
-| `areYouSure` | `boolean` | required to delete | Must be `true` to actually delete. Omit or pass `false` to receive the confirmation prompt. |
+| `areYouSure` | `boolean` | fallback only | Required only when the client cannot do URL elicitation. URL-capable clients always get a portal prompt and this flag is ignored. Set `true` to confirm the delete when the client has no URL elicitation. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
 
 **Returns:** a `string` confirmation message, e.g. `Deleted user '<userId>'`.
@@ -411,16 +408,15 @@ BroadWorks data.**
 Delete a service pack from a service provider. **Mutates live BroadWorks data and is irreversible.**
 BroadWorks may reject the deletion if the pack is still authorized to groups or assigned to users.
 
-This is a two-step operation: the first call without `areYouSure` (or with `areYouSure=false`)
-prompts for confirmation (via elicitation when the client supports it, otherwise as an
-"Are you sure?" error) and makes no changes. Call again with `areYouSure=true` if the client
-does not complete elicitation.
+URL-capable MCP clients always open a portal confirmation page that a human must Confirm or
+Deny; the agent cannot approve the delete, and `areYouSure` is ignored. Clients without URL
+elicitation must pass `areYouSure=true` or the call is refused with no BroadWorks change.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `serviceProviderId` | `string` | required | The service provider id that owns the service pack. |
 | `servicePackName` | `string` | required | The name of the service pack to delete. |
-| `areYouSure` | `boolean` | required to delete | Must be `true` to actually delete. Omit or pass `false` to receive the confirmation prompt. |
+| `areYouSure` | `boolean` | fallback only | Required only when the client cannot do URL elicitation. URL-capable clients always get a portal prompt and this flag is ignored. Set `true` to confirm the delete when the client has no URL elicitation. |
 | `resourceId` | `string` | optional | BroadWorks resource id when multiple connections are configured. |
 
 **Returns:** a `string` confirmation message, e.g. `Deleted service pack '<name>' from service provider <id>`.

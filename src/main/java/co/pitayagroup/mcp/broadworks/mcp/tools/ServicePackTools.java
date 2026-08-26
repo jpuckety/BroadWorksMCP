@@ -7,6 +7,7 @@ import co.pitayagroup.mcp.broadworks.auth.session.UserContext;
 import co.pitayagroup.mcp.broadworks.auth.session.UserInfo;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaConnectionFactory;
 import co.pitayagroup.mcp.broadworks.mcp.AlpacaException;
+import co.pitayagroup.mcp.broadworks.mcp.approval.ConfirmationService;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServicePackDetail;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServicePackSummary;
 import co.pitayagroup.mcp.broadworks.mcp.model.ServiceQuantity;
@@ -38,8 +39,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>When a client supports MCP elicitation, list/get/create/modify/delete will pause and request
  * any missing required identifiers rather than failing immediately. Optional connection
- * {@code resourceId}, quantity, services lists, description, availability, and the delete
- * {@code areYouSure} flag are never elicited.</p>
+ * {@code resourceId}, quantity, services lists, description, and availability are never
+ * elicited. Deletes confirm in the portal when the client supports URL elicitation;
+ * {@code areYouSure=true} is only for clients without that capability.</p>
  */
 @Slf4j
 @Component
@@ -47,6 +49,7 @@ import org.springframework.stereotype.Component;
 public class ServicePackTools {
 
     private final AlpacaConnectionFactory connectionFactory;
+    private final ConfirmationService confirmationService;
 
     List<ServicePackSummary> listServicePacks(String serviceProviderId, String resourceId) {
         return listServicePacks(serviceProviderId, resourceId, null);
@@ -333,11 +336,10 @@ public class ServicePackTools {
     @McpTool(name = "broadworks_delete_service_pack",
             description = "Delete a service pack from a BroadWorks service provider. This mutates live "
                     + "BroadWorks data and is irreversible. BroadWorks may reject the deletion if the pack is still "
-                    + "authorized to groups or assigned to users. This is a two-step operation: first call "
-                    + "without areYouSure (or with areYouSure=false) to receive a confirmation prompt; then "
-                    + "call again with areYouSure=true to proceed. If the client supports elicitation, "
-                    + "confirmation is requested in-band instead of requiring a second call. "
-                    + "Returns a short confirmation message. "
+                    + "authorized to groups or assigned to users. URL-capable MCP clients always receive a "
+                    + "portal confirmation page that a human must Confirm; the agent cannot approve the delete. "
+                    + "Clients without URL elicitation must pass areYouSure=true or the call is refused with "
+                    + "no BroadWorks change. Returns a short confirmation message. "
                     + "If serviceProviderId or servicePackName is omitted and the client supports elicitation, "
                     + "the server will request them.",
             annotations = @McpTool.McpAnnotations(destructiveHint = true))
@@ -348,8 +350,9 @@ public class ServicePackTools {
             @McpToolParam(required = false, description = "The name of the service pack to delete")
             String servicePackName,
             @McpToolParam(required = false,
-                    description = "Must be true to actually delete. Call first without this (or with false) "
-                            + "to get an Are you sure? prompt; then call again with areYouSure=true")
+                    description = "Required only for clients that cannot do URL elicitation. URL-capable "
+                            + "clients always get a portal prompt and this flag is ignored. Set true to confirm "
+                            + "the delete when the client has no URL elicitation")
             Boolean areYouSure,
             @McpToolParam(required = false,
                     description = "Optional BroadWorks resource id when multiple connections are configured")
@@ -359,7 +362,7 @@ public class ServicePackTools {
                 ToolElicitation.resolveServicePackRef(serviceProviderId, servicePackName, requestContext);
         final String spId = require(ref.serviceProviderId(), "serviceProviderId");
         final String packName = require(ref.servicePackName(), "servicePackName");
-        ToolElicitation.requireAreYouSure(areYouSure, "delete service pack '" + packName
+        confirmationService.requireAreYouSure(areYouSure, "delete service pack '" + packName
                 + "' from service provider " + spId, requestContext);
         log.debug("tool broadworks_delete_service_pack invoked (serviceProviderId={}, servicePackName={}, "
                 + "resourceId={})", spId, packName, resourceId);
