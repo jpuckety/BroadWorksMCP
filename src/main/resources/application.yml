@@ -98,7 +98,7 @@ broadworks:
       # Grok, vscode.dev) so they register without extra configuration. Loopback HTTP (RFC 8252
       # native clients such as Claude Desktop / MCP Inspector) and custom schemes (e.g. cursor://)
       # are always allowed regardless.
-      allow-well-known-clients: true
+      allow-well-known-clients: ${OAUTH_ALLOW_KNOWN_CLIENTS:true}
   cors:
     # Origins allowed to call /mcp, the discovery documents, /oauth/register and /oauth2/** from a
     # browser (comma-separated). Empty -> the well-known hosted MCP client origins. Only these
