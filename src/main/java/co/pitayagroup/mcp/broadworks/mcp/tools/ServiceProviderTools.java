@@ -378,10 +378,12 @@ public class ServiceProviderTools {
         final String domain = require(details.defaultDomain(), "defaultDomain");
         final BroadWorksServer server = connect(resourceId);
         try {
+            // The (server, String) constructor writes defaultDomain, not serviceProviderId.
+            // Without setServiceProviderId BroadWorks rejects the add with error 4073.
             final ServiceProvider.ServiceProviderConsolidatedAddRequest request =
-                    new ServiceProvider.ServiceProviderConsolidatedAddRequest(server, spId);
+                    new ServiceProvider.ServiceProviderConsolidatedAddRequest(server, domain);
+            request.setServiceProviderId(spId);
             request.setServiceProviderName(spName);
-            request.setDefaultDomain(domain);
             if (Boolean.TRUE.equals(enterprise)) {
                 request.setFlagIsEnterprise();
             }
@@ -407,6 +409,10 @@ public class ServiceProviderTools {
                 request.setAddress(address);
             }
 
+            log.debug("tool broadworks_create_service_provider sending serviceProviderId={}, "
+                            + "serviceProviderName={}, defaultDomain={}, enterprise={}",
+                    request.getServiceProviderId(), request.getServiceProviderName(),
+                    request.getDefaultDomain(), request.getIsEnterprise());
             final DefaultResponse response = request.fire();
             AlpacaRequests.ensureSuccess(response, "create service provider " + spId);
             AlpacaRequests.flushResponseCache(server);

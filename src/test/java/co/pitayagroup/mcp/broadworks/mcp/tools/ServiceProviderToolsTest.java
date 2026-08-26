@@ -550,6 +550,9 @@ class ServiceProviderToolsTest {
                     "Jane", null, null, null, null, null, null, null, null, null);
 
             final ServiceProvider.ServiceProviderConsolidatedAddRequest req = mocked.constructed().get(0);
+            // The (server, String) constructor sets defaultDomain, not the id — the id must be set
+            // explicitly or BroadWorks rejects the add with error 4073.
+            org.mockito.Mockito.verify(req).setServiceProviderId("sp-new");
             org.mockito.Mockito.verify(req).setServiceProviderName("Acme");
             org.mockito.Mockito.verify(req).setDefaultDomain("acme.example.com");
             org.mockito.Mockito.verify(req).setSupportEmail("help@acme.example.com");
@@ -592,6 +595,7 @@ class ServiceProviderToolsTest {
                     "ent-1", "Ent", "ent.example.com", true, null,
                     null, null, null, null, null, null, null, null, null, null);
 
+            org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderId("ent-1");
             org.mockito.Mockito.verify(mocked.constructed().get(0)).setFlagIsEnterprise();
             assertThat(detail.enterprise()).isTrue();
         }
@@ -709,6 +713,7 @@ class ServiceProviderToolsTest {
                     null, null, null, null, null,
                     null, null, null, null, null, null, null, null, null, null, requestContext);
 
+            org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderId("sp-new");
             org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderName("Acme");
             assertThat(detail.serviceProviderId()).isEqualTo("sp-new");
         }
