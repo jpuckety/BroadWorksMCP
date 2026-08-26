@@ -542,10 +542,14 @@ class ServiceProviderToolsTest {
         final DefaultResponse response = mock(DefaultResponse.class);
         when(response.isErrorResponse()).thenReturn(false);
 
+        final List<Object> ctorArgs = new ArrayList<>();
         try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
              MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> mocked =
                      mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
-                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+                             (m, ctx) -> {
+                                 ctorArgs.addAll(ctx.arguments());
+                                 when(m.fire()).thenReturn(response);
+                             })) {
             statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("sp-new")))
                     .thenReturn(created);
 
@@ -556,11 +560,12 @@ class ServiceProviderToolsTest {
             final ServiceProvider.ServiceProviderConsolidatedAddRequest req = mocked.constructed().get(0);
             // The (server, String) constructor sets defaultDomain, not the id — the id must be set
             // explicitly or BroadWorks rejects the add with error 4073.
+            assertThat(ctorArgs).containsExactly(null, "acme.example.com");
             org.mockito.Mockito.verify(req).setServiceProviderId("sp-new");
             org.mockito.Mockito.verify(req).setServiceProviderName("Acme");
-            org.mockito.Mockito.verify(req).setDefaultDomain("acme.example.com");
+            org.mockito.Mockito.verify(req, never()).setDefaultDomain(any());
             org.mockito.Mockito.verify(req).setSupportEmail("help@acme.example.com");
-            org.mockito.Mockito.verify(req, org.mockito.Mockito.never()).setFlagIsEnterprise();
+            org.mockito.Mockito.verify(req, never()).setFlagIsEnterprise();
 
             final ArgumentCaptor<Contact> contactCaptor = ArgumentCaptor.forClass(Contact.class);
             org.mockito.Mockito.verify(req).setContact(contactCaptor.capture());
