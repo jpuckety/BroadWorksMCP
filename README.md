@@ -148,7 +148,7 @@ in-memory, and **all logging goes to stderr** (stdout is reserved for the MCP pr
 | `KMS_KEY_ID` | *(empty)* | Customer-managed KMS key id/ARN for secret encryption (required for `DYNAMODB`). |
 | `AWS_REGION` | *(SDK default)* | AWS region for DynamoDB/KMS. |
 | `APPLICATION_ID` | `broadworks-mcp` | Partition key for the per-user resource table. |
-| `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma-separated list of allowed redirect-URI prefixes for HTTPS **and** custom schemes (e.g. `https://app.example.com/,cursor://`). Loopback HTTP (`127.0.0.1` / `localhost`) is always allowed. |
+| `OAUTH_REDIRECT_ALLOWLIST` | *(empty)* | Comma-separated list of allowed HTTPS redirect-URI prefixes (e.g. `https://app.example.com/`). Loopback HTTP (`127.0.0.1` / `localhost` / `::1`) and custom schemes (desktop MCP clients such as `cursor://`) are always allowed. Empty + well-known clients (the default) accepts only those hosted callbacks for HTTPS. |
 | `ALLOW_PRIVATE_NETWORK_TARGETS` | `false` | Disable the SSRF host guard so a laptop can reach a BroadWorks host on a private LAN. |
 | `ALPACA_LIVE` | `true` | Live BroadWorks OCI login via `LiveAlpacaConnectionFactory`. Default on for runtime; set `false` only for tests (the test suite sets this automatically). |
 | `ALPACA_LICENSE_KEY` | *(empty)* | Alpaca toolkit license supplied inline as a string (secret). Loaded into the ECG licensing runtime at connection time, so no on-disk license file is needed. Empty → the license is provisioned by the runtime (license file / license manager). In ECS, supplied from SSM `/broadworks-mcp/alpaca-license-key`. |

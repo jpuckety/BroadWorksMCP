@@ -96,7 +96,8 @@ broadworks:
       allowed-https-prefixes: ${OAUTH_REDIRECT_ALLOWLIST:}
       # Additionally permit the callbacks of the well-known hosted MCP clients (Claude, ChatGPT,
       # Grok, vscode.dev) so they register without extra configuration. Loopback HTTP (RFC 8252
-      # native clients such as Claude Desktop / MCP Inspector) is always allowed regardless.
+      # native clients such as Claude Desktop / MCP Inspector) and custom schemes (e.g. cursor://)
+      # are always allowed regardless.
       allow-well-known-clients: true
   cors:
     # Origins allowed to call /mcp, the discovery documents, /oauth/register and /oauth2/** from a

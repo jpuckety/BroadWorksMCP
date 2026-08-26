@@ -12,19 +12,29 @@ class RedirectAllowlistPropertiesTest {
     void loopbackHttpIsAlwaysAllowed() {
         final RedirectAllowlistProperties props = new RedirectAllowlistProperties(List.of());
         assertThat(props.isAllowed("http://127.0.0.1:8123/callback")).isTrue();
+        assertThat(props.isAllowed("http://127.0.0.2/cb")).isTrue();
         assertThat(props.isAllowed("http://localhost/cb")).isTrue();
         assertThat(props.isAllowed("http://[::1]/1/cb")).isTrue();
+        assertThat(props.isAllowed("http://example.com/cb")).isFalse();
+        assertThat(props.isAllowed("http://192.168.1.1/cb")).isFalse();
     }
 
     @Test
-    void customSchemeRequiresAllowlistPrefix() {
+    void customSchemesAreAlwaysAllowed() {
         final RedirectAllowlistProperties empty = new RedirectAllowlistProperties(List.of());
-        assertThat(empty.isAllowed("cursor://auth/callback")).isFalse();
+        assertThat(empty.isAllowed("cursor://auth/callback")).isTrue();
+        assertThat(empty.isAllowed("vscode://other")).isTrue();
+        assertThat(empty.isAllowed("myapp:callback")).isTrue();
+    }
 
-        final RedirectAllowlistProperties allowlisted =
-                new RedirectAllowlistProperties(List.of("cursor://", "https://app.example.com/"));
-        assertThat(allowlisted.isAllowed("cursor://auth/callback")).isTrue();
-        assertThat(allowlisted.isAllowed("vscode://other")).isFalse();
+    @Test
+    void dangerousAndDottedSchemesAreRejected() {
+        final RedirectAllowlistProperties props = new RedirectAllowlistProperties(List.of());
+        assertThat(props.isAllowed("javascript:alert(1)")).isFalse();
+        assertThat(props.isAllowed("data:text/html,hello")).isFalse();
+        assertThat(props.isAllowed("vbscript:msgbox(1)")).isFalse();
+        assertThat(props.isAllowed("file:///etc/passwd")).isFalse();
+        assertThat(props.isAllowed("com.example.app://callback")).isFalse();
     }
 
     @Test
@@ -33,6 +43,14 @@ class RedirectAllowlistPropertiesTest {
                 new RedirectAllowlistProperties(List.of("https://grok.x.ai/"));
         assertThat(props.isAllowed("https://grok.x.ai/oauth/callback")).isTrue();
         assertThat(props.isAllowed("https://evil.example.com/cb")).isFalse();
+    }
+
+    @Test
+    void emptyAllowlistWithWellKnownDisabledAllowsAnyHttpsHost() {
+        final RedirectAllowlistProperties props = new RedirectAllowlistProperties(List.of(), false);
+        assertThat(props.isAllowed("https://evil.example.com/cb")).isTrue();
+        assertThat(props.isAllowed("https://app.example.com/oauth/callback")).isTrue();
+        assertThat(props.isAllowed("https:///nohost")).isFalse();
     }
 
     @Test
@@ -70,15 +88,6 @@ class RedirectAllowlistPropertiesTest {
         assertThat(defaultPort.isAllowed("https://app.example.com:8443/cb")).isFalse();
         // A non-loopback plain-HTTP candidate is never allowed, even for an allow-listed host.
         assertThat(defaultPort.isAllowed("http://app.example.com/cb")).isFalse();
-    }
-
-    @Test
-    void customSchemeEntryWithAuthorityRequiresExactAuthority() {
-        final RedirectAllowlistProperties props =
-                new RedirectAllowlistProperties(List.of("cursor://auth/callback"));
-        assertThat(props.isAllowed("cursor://auth/callback")).isTrue();
-        assertThat(props.isAllowed("cursor://auth/callback/done")).isTrue();
-        assertThat(props.isAllowed("cursor://other/callback")).isFalse();
     }
 
     @Test

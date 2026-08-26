@@ -192,13 +192,14 @@ class OAuthSecurityIntegrationTest {
     }
 
     @Test
-    void dynamicClientRegistrationRejectsNonAllowlistedCustomScheme() throws Exception {
+    void dynamicClientRegistrationAcceptsCustomScheme() throws Exception {
         final String body = """
                 {"redirect_uris":["cursor://auth/callback"],"client_name":"Cursor"}""";
 
         mockMvc.perform(post("/oauth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.client_id", notNullValue()));
     }
 }

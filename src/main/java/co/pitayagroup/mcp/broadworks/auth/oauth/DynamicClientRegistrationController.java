@@ -30,8 +30,9 @@ import org.springframework.web.bind.annotation.RestController;
  * <b>public clients</b> (no client secret is ever issued). Registered clients are persisted durably
  * via the {@link SessionStore} with the configured lifetime.
  *
- * <p>Redirect URIs are validated against the allow-list: HTTPS and custom-scheme URIs must match a
- * configured prefix; loopback HTTP is always permitted.</p>
+ * <p>Redirect URIs are validated against the allow-list: loopback HTTP and custom schemes (desktop
+ * MCP clients) are always permitted; HTTPS must match a configured prefix (or a well-known hosted
+ * client callback) unless the allow-list is empty.</p>
  *
  * <p>Rejections are reported as RFC 7591 section 3.2.2 error objects
  * ({@code {"error":"invalid_redirect_uri","error_description":"..."}}) and logged, so a client that
