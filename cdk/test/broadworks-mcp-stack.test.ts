@@ -188,6 +188,14 @@ describe('BroadWorksMcpStack', () => {
     expect(APP_HEALTH_CHECK_PATH).toBe('/actuator/health');
   });
 
+  test('Dockerfile pulls official bases from ECR Public, not Docker Hub', () => {
+    const dockerfile = fs.readFileSync(path.join(__dirname, '../../Dockerfile'), 'utf8');
+    expect(dockerfile).toMatch(/^FROM public\.ecr\.aws\/docker\/library\/maven:/m);
+    expect(dockerfile).toMatch(/^FROM public\.ecr\.aws\/docker\/library\/eclipse-temurin:/m);
+    expect(dockerfile).not.toMatch(/^FROM maven:/m);
+    expect(dockerfile).not.toMatch(/^FROM eclipse-temurin:/m);
+  });
+
   test('PR workflow runs Maven verify and docker build', () => {
     const yml = fs.readFileSync(path.join(__dirname, '../../.github/workflows/pr-ci.yml'), 'utf8');
     expect(yml).toContain('mvn -B -Pinstall-alpaca verify');

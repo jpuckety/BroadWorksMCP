@@ -3,8 +3,11 @@
 # ============================================================================
 # Build stage: install the Alpaca toolkit JARs from lib/ into the local Maven
 # repo (via the install-alpaca profile) and produce the runnable Boot jar.
+# Official images come from Amazon ECR Public (same gallery as the stack's
+# busybox placeholder). CodeBuild shares Docker Hub IPs and anonymous Hub
+# pulls 429; public.ecr.aws/docker/library/* is the Official Images mirror.
 # ============================================================================
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM public.ecr.aws/docker/library/maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
 
 # Copy the pieces needed to install the local Alpaca artifacts first (better layer caching).
@@ -34,7 +37,7 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B -DskipTests clean package
 # ============================================================================
 # Runtime stage: minimal JRE 21 image running the repackaged jar.
 # ============================================================================
-FROM eclipse-temurin:21-jre
+FROM public.ecr.aws/docker/library/eclipse-temurin:21-jre
 WORKDIR /app
 
 # Non-privileged system user; the JVM never runs as root.
