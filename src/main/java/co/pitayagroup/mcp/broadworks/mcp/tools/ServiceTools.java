@@ -662,8 +662,10 @@ public class ServiceTools {
             final List<ServiceAuthorization> packs =
                     (packRows == null ? List.<GroupServiceServicePacksAuthorizationTableRow>of()
                             : packRows).stream()
+                            // Allocated is the group's authorized quantity (the limit set on the group).
+                            // Allowed is the parent service-provider pool and must not be reported as quantity.
                             .map(r -> authorization(r.getServicePackName(), r.getAuthorized(), r.getLimited(),
-                                    r.getAllowed()))
+                                    r.getAllocated()))
                             .toList();
 
             return new ServiceAuthorizationSet(users, groups, packs);

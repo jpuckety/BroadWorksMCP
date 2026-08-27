@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
@@ -133,13 +134,15 @@ class ServiceToolsTest {
     }
 
     private static GroupServiceServicePacksAuthorizationTableRow grpPackRow(
-            String name, String authorized, String limited, String allowed) {
+            String name, String authorized, String limited, String allocated, String allowed) {
         final GroupServiceServicePacksAuthorizationTableRow row =
                 mock(GroupServiceServicePacksAuthorizationTableRow.class);
         when(row.getServicePackName()).thenReturn(name);
         when(row.getAuthorized()).thenReturn(authorized);
         when(row.getLimited()).thenReturn(limited);
-        when(row.getAllowed()).thenReturn(allowed);
+        when(row.getAllocated()).thenReturn(allocated);
+        // Allowed is the parent pool; stub it so a regression to getAllowed() fails this test.
+        lenient().when(row.getAllowed()).thenReturn(allowed);
         return row;
     }
 
@@ -351,7 +354,7 @@ class ServiceToolsTest {
         when(response.isErrorResponse()).thenReturn(false);
         // Build the row mocks into locals first (see note above) to avoid nested stubbing.
         final List<GroupServiceServicePacksAuthorizationTableRow> packRows = List.of(
-                grpPackRow("Gold", "true", "true", "12"));
+                grpPackRow("Gold", "true", "true", "12", "99"));
         final List<GroupServiceGroupServicesAuthorizationTableRow> groupRows = List.of(
                 grpGroupRow("Auto Attendant", "true", "false", null));
         final List<GroupServiceUserServicesAuthorizationTableRow> userRows = List.of(
