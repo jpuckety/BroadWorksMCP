@@ -554,7 +554,7 @@ class ServiceProviderToolsTest {
                     .thenReturn(created);
 
             final ServiceProviderDetail detail = tools.createServiceProvider(
-                    "sp-new", "Acme", "acme.example.com", null, "help@acme.example.com",
+                    "sp-new", "Acme", "acme.example.com", false, "help@acme.example.com",
                     "Jane", null, null, null, null, null, null, null, null, null);
 
             final ServiceProvider.ServiceProviderConsolidatedAddRequest req = mocked.constructed().get(0);
@@ -633,7 +633,7 @@ class ServiceProviderToolsTest {
                              (m, ctx) -> when(m.fire()).thenReturn(response))) {
 
             assertThatThrownBy(() -> tools.createServiceProvider(
-                    "sp-dup", "Acme", "acme.example.com", null, null,
+                    "sp-dup", "Acme", "acme.example.com", false, null,
                     null, null, null, null, null, null, null, null, null, null))
                     .isInstanceOf(AlpacaException.class)
                     .hasMessageContaining("create service provider");
@@ -696,7 +696,8 @@ class ServiceProviderToolsTest {
         when(requestContext.elicitEnabled()).thenReturn(true);
         when(requestContext.elicit(any(), eq(CreateServiceProviderDetails.class)))
                 .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
-                        new CreateServiceProviderDetails("sp-new", "Acme", "acme.example.com"), Map.of()));
+                        new CreateServiceProviderDetails("sp-new", "Acme", "acme.example.com", false),
+                        Map.of()));
 
         final ServiceProvider created = mock(ServiceProvider.class);
         when(created.getServiceProviderId()).thenReturn("sp-new");
@@ -724,8 +725,55 @@ class ServiceProviderToolsTest {
 
             org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderId("sp-new");
             org.mockito.Mockito.verify(mocked.constructed().get(0)).setServiceProviderName("Acme");
+            org.mockito.Mockito.verify(mocked.constructed().get(0), never()).setFlagIsEnterprise();
             assertThat(detail.serviceProviderId()).isEqualTo("sp-new");
         }
+    }
+
+    @Test
+    void createServiceProviderElicitsEnterpriseWhenOmitted() {
+        when(connectionFactory.connect(eq("sub-1"), eq(null))).thenReturn(null);
+        when(requestContext.elicitEnabled()).thenReturn(true);
+        when(requestContext.elicit(any(), eq(CreateServiceProviderDetails.class)))
+                .thenReturn(new StructuredElicitResult<>(ElicitResult.Action.ACCEPT,
+                        new CreateServiceProviderDetails(null, null, null, true), Map.of()));
+
+        final ServiceProvider created = mock(ServiceProvider.class);
+        when(created.getServiceProviderId()).thenReturn("ent-1");
+        when(created.getServiceProviderName()).thenReturn("Ent");
+        when(created.getDefaultDomain()).thenReturn("ent.example.com");
+        when(created.getIsEnterprise()).thenReturn(Boolean.TRUE);
+        when(created.getResellerId()).thenReturn(null);
+        when(created.getSupportEmail()).thenReturn(null);
+        when(created.getContact()).thenReturn(null);
+        when(created.getAddress()).thenReturn(null);
+
+        final DefaultResponse response = mock(DefaultResponse.class);
+        when(response.isErrorResponse()).thenReturn(false);
+
+        try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
+             MockedConstruction<ServiceProvider.ServiceProviderConsolidatedAddRequest> mocked =
+                     mockConstruction(ServiceProvider.ServiceProviderConsolidatedAddRequest.class,
+                             (m, ctx) -> when(m.fire()).thenReturn(response))) {
+            statics.when(() -> ServiceProvider.getPopulatedServiceProvider(any(), eq("ent-1")))
+                    .thenReturn(created);
+
+            final ServiceProviderDetail detail = tools.createServiceProvider(
+                    "ent-1", "Ent", "ent.example.com", null, null,
+                    null, null, null, null, null, null, null, null, null, null, requestContext);
+
+            org.mockito.Mockito.verify(mocked.constructed().get(0)).setFlagIsEnterprise();
+            assertThat(detail.enterprise()).isTrue();
+        }
+    }
+
+    @Test
+    void createServiceProviderRejectsMissingEnterprise() {
+        assertThatThrownBy(() -> tools.createServiceProvider(
+                "sp-new", "Acme", "acme.example.com", null, null,
+                null, null, null, null, null, null, null, null, null, null))
+                .isInstanceOf(AlpacaException.class)
+                .hasMessageContaining("enterprise is required");
     }
 
     @Test
@@ -738,7 +786,7 @@ class ServiceProviderToolsTest {
                 null, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, requestContext))
                 .isInstanceOf(AlpacaException.class)
-                .hasMessage("serviceProviderId, serviceProviderName and defaultDomain are required");
+                .hasMessage("serviceProviderId, serviceProviderName, defaultDomain and enterprise are required");
     }
 
     @Test

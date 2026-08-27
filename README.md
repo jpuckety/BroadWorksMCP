@@ -313,7 +313,7 @@ curl -sS -X POST http://localhost:8080/oauth/register \
 | `broadworks_list_service_providers` | List service providers / enterprises. |
 | `broadworks_get_service_provider` | Get a service provider by id. |
 | `broadworks_modify_service_provider` | Modify a service provider (partial update: name, default domain, support email, contact, address). Mutates live BroadWorks data. |
-| `broadworks_create_service_provider` | Create a service provider (or enterprise) from id, name, default domain, and optional support email, contact, address. Mutates live BroadWorks data. |
+| `broadworks_create_service_provider` | Create a service provider (or enterprise) from id, name, default domain, and enterprise flag, plus optional support email, contact, address. Mutates live BroadWorks data. |
 | `broadworks_list_groups` | List groups within a service provider (or system-wide). |
 | `broadworks_get_group` | Get a group by id within a service provider. |
 | `broadworks_modify_group` | Modify a group (partial update: name, default domain, user limit, calling line id, time zone, location dialing code, contact, address). Mutates live BroadWorks data. |

@@ -102,5 +102,7 @@ class ToolElicitationTest {
         assertThat(ToolElicitation.firstNonBlank("  ", "elicited")).isEqualTo("elicited");
         assertThat(ToolElicitation.firstNonNull(5, 9)).isEqualTo(5);
         assertThat(ToolElicitation.firstNonNull(null, 9)).isEqualTo(9);
+        assertThat(ToolElicitation.firstNonNull(Boolean.FALSE, Boolean.TRUE)).isFalse();
+        assertThat(ToolElicitation.firstNonNull(null, Boolean.FALSE)).isFalse();
     }
 }

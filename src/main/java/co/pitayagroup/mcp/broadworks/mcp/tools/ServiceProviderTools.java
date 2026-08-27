@@ -317,14 +317,14 @@ public class ServiceProviderTools {
 
     @McpTool(name = "broadworks_create_service_provider",
             description = "Create a new BroadWorks service provider (or enterprise). This mutates live "
-                    + "BroadWorks data. serviceProviderId, serviceProviderName and defaultDomain are required; "
-                    + "set enterprise=true to provision an enterprise instead of a plain service provider "
-                    + "(defaults to false). The optional supportEmail, contact (name/number/email) and address "
-                    + "fields are only sent when supplied — omit them entirely rather than sending placeholder "
-                    + "values such as 'N/A' or '00000', otherwise BroadWorks may reject the request as invalid. "
-                    + "If those required fields are omitted and the client supports elicitation, the server will "
-                    + "request them. Fails if a service provider with the same id already exists. Returns the "
-                    + "newly created service provider detail.")
+                    + "BroadWorks data. serviceProviderId, serviceProviderName, defaultDomain and enterprise "
+                    + "are required; set enterprise=true to provision an enterprise or false for a plain "
+                    + "service provider — do not omit the flag. The optional supportEmail, contact "
+                    + "(name/number/email) and address fields are only sent when supplied — omit them entirely "
+                    + "rather than sending placeholder values such as 'N/A' or '00000', otherwise BroadWorks "
+                    + "may reject the request as invalid. If those required fields are omitted and the client "
+                    + "supports elicitation, the server will request them. Fails if a service provider with the "
+                    + "same id already exists. Returns the newly created service provider detail.")
     public ServiceProviderDetail createServiceProvider(
             @McpToolParam(required = false,
                     description = "The id for the new service provider (must be unique system-wide)")
@@ -335,7 +335,7 @@ public class ServiceProviderTools {
             String defaultDomain,
             @McpToolParam(required = false,
                     description = "Whether to provision an enterprise rather than a plain service provider; "
-                            + "defaults to false when omitted")
+                            + "true for enterprise, false for a plain service provider. Required — do not omit")
             Boolean enterprise,
             @McpToolParam(required = false,
                     description = "Support email; omit to leave unset")
@@ -373,12 +373,15 @@ public class ServiceProviderTools {
             String resourceId,
             McpSyncRequestContext requestContext) {
         final CreateServiceProviderDetails details = resolveCreateDetails(
-                serviceProviderId, serviceProviderName, defaultDomain, requestContext);
+                serviceProviderId, serviceProviderName, defaultDomain, enterprise, requestContext);
         log.debug("tool broadworks_create_service_provider invoked (serviceProviderId={}, enterprise={}, "
-                + "resourceId={})", details.serviceProviderId(), enterprise, resourceId);
+                + "resourceId={})", details.serviceProviderId(), details.enterprise(), resourceId);
         final String spId = require(details.serviceProviderId(), "serviceProviderId");
         final String spName = require(details.serviceProviderName(), "serviceProviderName");
         final String domain = require(details.defaultDomain(), "defaultDomain");
+        if (details.enterprise() == null) {
+            throw new AlpacaException("enterprise is required");
+        }
         final BroadWorksServer server = connect(resourceId);
         try {
             // The (server, String) constructor writes defaultDomain, not serviceProviderId.
@@ -387,7 +390,7 @@ public class ServiceProviderTools {
                     new ServiceProvider.ServiceProviderConsolidatedAddRequest(server, domain);
             request.setServiceProviderId(spId);
             request.setServiceProviderName(spName);
-            if (Boolean.TRUE.equals(enterprise)) {
+            if (details.enterprise()) {
                 request.setFlagIsEnterprise();
             }
             apply(supportEmail, request::setSupportEmail);
@@ -536,19 +539,23 @@ public class ServiceProviderTools {
     }
 
     private static CreateServiceProviderDetails resolveCreateDetails(String serviceProviderId,
-            String serviceProviderName, String defaultDomain, McpSyncRequestContext requestContext) {
+            String serviceProviderName, String defaultDomain, Boolean enterprise,
+            McpSyncRequestContext requestContext) {
         if ((!ToolElicitation.isBlank(serviceProviderId) && !ToolElicitation.isBlank(serviceProviderName)
-                && !ToolElicitation.isBlank(defaultDomain)) || !ToolElicitation.canElicit(requestContext)) {
-            return new CreateServiceProviderDetails(serviceProviderId, serviceProviderName, defaultDomain);
+                && !ToolElicitation.isBlank(defaultDomain) && enterprise != null)
+                || !ToolElicitation.canElicit(requestContext)) {
+            return new CreateServiceProviderDetails(serviceProviderId, serviceProviderName, defaultDomain,
+                    enterprise);
         }
         final CreateServiceProviderDetails elicited = ToolElicitation.elicit(requestContext,
-                "Service provider id, display name, and default domain are required.",
+                "Service provider id, display name, default domain, and enterprise flag are required.",
                 CreateServiceProviderDetails.class,
-                "serviceProviderId, serviceProviderName and defaultDomain are required");
+                "serviceProviderId, serviceProviderName, defaultDomain and enterprise are required");
         final CreateServiceProviderDetails merged = new CreateServiceProviderDetails(
                 ToolElicitation.firstNonBlank(serviceProviderId, elicited.serviceProviderId()),
                 ToolElicitation.firstNonBlank(serviceProviderName, elicited.serviceProviderName()),
-                ToolElicitation.firstNonBlank(defaultDomain, elicited.defaultDomain()));
+                ToolElicitation.firstNonBlank(defaultDomain, elicited.defaultDomain()),
+                ToolElicitation.firstNonNull(enterprise, elicited.enterprise()));
         log.info("Elicitation accepted for create service provider (serviceProviderId={})",
                 merged.serviceProviderId());
         return merged;
@@ -558,6 +565,6 @@ public class ServiceProviderTools {
      * Required create fields the client may supply either as tool arguments or via elicitation.
      */
     record CreateServiceProviderDetails(String serviceProviderId, String serviceProviderName,
-            String defaultDomain) {
+            String defaultDomain, Boolean enterprise) {
     }
 }

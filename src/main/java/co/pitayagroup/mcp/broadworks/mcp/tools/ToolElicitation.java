@@ -34,7 +34,7 @@ final class ToolElicitation {
         return isBlank(original) ? elicited : original;
     }
 
-    static Integer firstNonNull(Integer original, Integer elicited) {
+    static <T> T firstNonNull(T original, T elicited) {
         return original != null ? original : elicited;
     }
 
