@@ -112,9 +112,10 @@ public class AuthorizationServerConfig {
             } catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) {
                 final OAuth2AuthorizationCodeRequestAuthenticationToken authentication =
                         context.getAuthentication();
-                log.warn("Authorization request rejected clientId={} redirectUri={} error={} description={}",
+                log.warn("Authorization request rejected clientId={} redirectUri={} registeredRedirectUris={} error={} description={}",
                         authentication.getClientId(),
                         authentication.getRedirectUri(),
+                        context.getRegisteredClient().getRedirectUris(),
                         ex.getError().getErrorCode(),
                         ex.getError().getDescription());
                 throw ex;

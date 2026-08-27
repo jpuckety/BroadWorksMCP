@@ -109,6 +109,19 @@ class OAuthDiscoveryAndLoginRedirectTest {
     }
 
     @Test
+    void authorizeAllowsLocalhostWhenClientRegisteredLoopbackIp() throws Exception {
+        // Claude Desktop / MCP SDK register RFC 8252's 127.0.0.1 callback, then the browser
+        // authorize request uses localhost on a new ephemeral port — the production 400.
+        String clientId = registerClient("http://127.0.0.1:1111/callback");
+
+        mockMvc.perform(get(authorizeUrl(clientId, "http://localhost:56056/callback",
+                        "http://localhost:8080/mcp"))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", containsString("/oauth2/authorization/google")));
+    }
+
+    @Test
     void authorizeRejectsLocalhostRedirectWithDifferentPath() throws Exception {
         String clientId = registerClient("http://localhost:1111/callback");
 
