@@ -2,12 +2,14 @@ package co.pitayagroup.mcp.broadworks.config;
 
 import java.util.function.Consumer;
 
+import co.pitayagroup.mcp.broadworks.auth.oauth.LoopbackAwareRedirectUriValidator;
 import co.pitayagroup.mcp.broadworks.auth.session.OpaqueTokenFactory;
 import co.pitayagroup.mcp.broadworks.auth.session.StoreBackedAuthorizationService;
 import co.pitayagroup.mcp.broadworks.auth.session.StoreBackedRegisteredClientRepository;
 import co.pitayagroup.mcp.broadworks.auth.store.AuthorizationStore;
 import co.pitayagroup.mcp.broadworks.auth.store.SessionStore;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
@@ -42,6 +44,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
  * are durable via {@link AuthorizationStore}; issued sessions via {@link SessionStore}.
  * Unauthenticated browser hits on the authorize endpoint redirect to Google login.</p>
  */
+@Slf4j
 @Configuration(proxyBeanMethods = false)
 public class AuthorizationServerConfig {
 
@@ -85,18 +88,38 @@ public class AuthorizationServerConfig {
 
     /**
      * Reject authorize requests whose RFC 8707 {@code resource} does not match the canonical MCP
-     * resource. Composes with SAS default redirect_uri / scope validators.
+     * resource. Loopback {@code redirect_uri}s (including {@code localhost}) allow any port per
+     * RFC 8252; other redirect / scope checks stay on the SAS defaults.
      */
     private static void configureResourceValidators(java.util.List<AuthenticationProvider> providers,
                                                     String canonicalResource) {
         for (AuthenticationProvider provider : providers) {
             if (provider instanceof OAuth2AuthorizationCodeRequestAuthenticationProvider codeProvider) {
-                final Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> defaults =
-                        new OAuth2AuthorizationCodeRequestAuthenticationValidator();
-                codeProvider.setAuthenticationValidator(
-                        defaults.andThen(resourceValidator(canonicalResource)));
+                final Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> validator =
+                        LoopbackAwareRedirectUriValidator.INSTANCE
+                                .andThen(OAuth2AuthorizationCodeRequestAuthenticationValidator.DEFAULT_SCOPE_VALIDATOR)
+                                .andThen(resourceValidator(canonicalResource));
+                codeProvider.setAuthenticationValidator(loggingValidator(validator));
             }
         }
+    }
+
+    private static Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> loggingValidator(
+            Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> validator) {
+        return context -> {
+            try {
+                validator.accept(context);
+            } catch (OAuth2AuthorizationCodeRequestAuthenticationException ex) {
+                final OAuth2AuthorizationCodeRequestAuthenticationToken authentication =
+                        context.getAuthentication();
+                log.warn("Authorization request rejected clientId={} redirectUri={} error={} description={}",
+                        authentication.getClientId(),
+                        authentication.getRedirectUri(),
+                        ex.getError().getErrorCode(),
+                        ex.getError().getDescription());
+                throw ex;
+            }
+        };
     }
 
     private static Consumer<OAuth2AuthorizationCodeRequestAuthenticationContext> resourceValidator(

@@ -84,27 +84,74 @@ class OAuthDiscoveryAndLoginRedirectTest {
     @Test
     void unauthenticatedBrowserAuthorizeRequestRedirectsToGoogleLogin() throws Exception {
         // Register a public client dynamically, exactly as an MCP client would.
-        String regBody = """
-                {"redirect_uris":["http://127.0.0.1:8123/callback"],"client_name":"Test"}""";
+        String clientId = registerClient("http://127.0.0.1:8123/callback");
+
+        // A browser (Accept: text/html) hitting the authorization endpoint unauthenticated must be
+        // redirected to the Google login initiation endpoint rather than receiving an error.
+        mockMvc.perform(get(authorizeUrl(clientId, "http://127.0.0.1:8123/callback", null))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", containsString("/oauth2/authorization/google")));
+    }
+
+    @Test
+    void authorizeAllowsLocalhostEphemeralPortUsedByDesktopMcpClients() throws Exception {
+        // MCP Inspector / Claude Desktop / Cursor register a loopback callback then bind an
+        // ephemeral port at authorize time. SAS exact-matches `localhost` (unlike 127.0.0.1),
+        // which produced the production 400 on /oauth2/authorize.
+        String clientId = registerClient("http://localhost:1111/callback");
+
+        mockMvc.perform(get(authorizeUrl(clientId, "http://localhost:56056/callback",
+                        "http://localhost:8080/mcp"))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", containsString("/oauth2/authorization/google")));
+    }
+
+    @Test
+    void authorizeRejectsLocalhostRedirectWithDifferentPath() throws Exception {
+        String clientId = registerClient("http://localhost:1111/callback");
+
+        mockMvc.perform(get(authorizeUrl(clientId, "http://localhost:56056/other", null))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void authorizeRejectsMismatchedResourceIndicator() throws Exception {
+        String clientId = registerClient("http://localhost:1111/callback");
+
+        // redirect_uri is valid, so RFC 6749 sends the error back to the client instead of a 400.
+        mockMvc.perform(get(authorizeUrl(clientId, "http://localhost:56056/callback",
+                        "https://evil.example.com/mcp"))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", containsString("http://localhost:56056/callback")))
+                .andExpect(header().string("Location", containsString("error=invalid_target")));
+    }
+
+    private String registerClient(String redirectUri) throws Exception {
+        String regBody = "{\"redirect_uris\":[\"" + redirectUri + "\"],\"client_name\":\"Test\"}";
         MvcResult reg = mockMvc.perform(post("/oauth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(regBody))
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode node = objectMapper.readTree(reg.getResponse().getContentAsString());
-        String clientId = node.get("client_id").asText();
+        return node.get("client_id").asText();
+    }
 
-        // A browser (Accept: text/html) hitting the authorization endpoint unauthenticated must be
-        // redirected to the Google login initiation endpoint rather than receiving an error.
+    private static String authorizeUrl(String clientId, String redirectUri, String resource) {
         String url = "/oauth2/authorize?response_type=code"
                 + "&client_id=" + clientId
-                + "&redirect_uri=http://127.0.0.1:8123/callback"
+                + "&redirect_uri=" + redirectUri
                 + "&scope=openid"
                 + "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
                 + "&code_challenge_method=S256";
-        mockMvc.perform(get(url).accept(MediaType.TEXT_HTML))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(header().string("Location", containsString("/oauth2/authorization/google")));
+        if (resource != null) {
+            url += "&resource=" + resource;
+        }
+        return url;
     }
 
     @Test

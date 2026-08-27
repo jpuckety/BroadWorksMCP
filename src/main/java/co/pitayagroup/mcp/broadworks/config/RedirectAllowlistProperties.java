@@ -172,9 +172,10 @@ public record RedirectAllowlistProperties(
 
     /**
      * Loopback HTTP hosts accepted for native-app redirects. Literal IPs are parsed without DNS so a
-     * hostname cannot become loopback by resolution.
+     * hostname cannot become loopback by resolution. {@code localhost} is included so authorize-time
+     * matching can apply RFC 8252 ephemeral-port rules to the hostname MCP clients actually send.
      */
-    private static boolean isLoopbackHost(String host) {
+    public static boolean isLoopbackHost(String host) {
         if (host == null || host.isBlank()) {
             return false;
         }
