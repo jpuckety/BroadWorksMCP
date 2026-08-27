@@ -112,6 +112,8 @@ public class SecurityConfig {
                                         .scope("email")
                                         .scope("profile"))))
                 .oauth2Login(oauth2 -> oauth2
+                        // alwaysUse=false: a SavedRequest to /oauth2/authorize (MCP) still wins.
+                        .defaultSuccessUrl("/portal", false)
                         .userInfoEndpoint(userInfo -> userInfo
                                 .userAuthoritiesMapper(factorStampingAuthoritiesMapper())
                                 .oidcUserService(oidcUserService())))

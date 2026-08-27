@@ -41,13 +41,30 @@ describe('ApprovalComponent', () => {
     expect(compiled.textContent).toContain("delete user 'u1'");
     expect(compiled.textContent).toContain('Confirm');
 
-    compiled.querySelector<HTMLButtonElement>('.btn.primary')?.click();
+    compiled.querySelector<HTMLButtonElement>('.form-actions .btn-primary')?.click();
     await fixture.whenStable();
     fixture.detectChanges();
 
     expect(service.decide).toHaveBeenCalledWith('a1', 'APPROVED');
     expect(compiled.textContent).toContain('You can close this tab');
     expect(compiled.textContent).toContain('The waiting tool will resume');
+  });
+
+  it('denies a pending approval', async () => {
+    await setup('a1');
+    service.decide.mockReturnValueOnce(of({
+      id: 'a1',
+      action: "delete user 'u1'",
+      status: 'DECLINED' as const
+    }));
+    const compiled = fixture.nativeElement as HTMLElement;
+
+    compiled.querySelector<HTMLButtonElement>('.form-actions .btn-outline-danger')?.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(service.decide).toHaveBeenCalledWith('a1', 'DECLINED');
+    expect(compiled.textContent).toContain('Denied. You can close this tab');
   });
 
   it('shows a not-found error for a 404', async () => {

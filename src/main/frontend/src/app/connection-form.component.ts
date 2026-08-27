@@ -13,55 +13,145 @@ import { ConnectionsService } from './connections.service';
   selector: 'app-connection-form',
   imports: [ReactiveFormsModule, RouterLink],
   template: `
-    <section class="panel">
-      <div class="panel-header">
-        <h2>{{ editing() ? 'Edit connection' : 'Add connection' }}</h2>
-        <a class="btn" routerLink="/">Back</a>
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h2>{{ editing() ? 'Edit connection' : 'Add connection' }}</h2>
+          <p class="page-subtitle">
+            OCI host, port, and username. Passwords stay encrypted at rest and are never returned.
+          </p>
+        </div>
+        <a class="btn btn-secondary" routerLink="/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          Back
+        </a>
       </div>
 
       @if (error()) {
-        <p class="error" role="alert">{{ error() }}</p>
+        <p class="alert alert-danger" role="alert">{{ error() }}</p>
       }
 
       @if (verifyResult(); as result) {
-        <p [class.success]="result.success" [class.error]="!result.success" role="status">
+        <p
+          class="alert"
+          [class.alert-success]="result.success"
+          [class.alert-danger]="!result.success"
+          role="status"
+        >
           {{ result.message }}
         </p>
       }
 
-      <form [formGroup]="form" (ngSubmit)="save()" class="form">
-        <label>
-          <span>Display name</span>
-          <input type="text" formControlName="displayName" autocomplete="off" />
-        </label>
-        <label>
-          <span>Hostname</span>
-          <input type="text" formControlName="hostname" autocomplete="off" placeholder="portal.example.com" />
-        </label>
-        <label>
-          <span>Port</span>
-          <input type="number" formControlName="port" min="1" max="65535" />
-        </label>
-        <label>
-          <span>Username</span>
-          <input type="text" formControlName="username" autocomplete="off" />
-        </label>
-        <label>
-          <span>Password {{ editing() ? '(leave blank to keep current)' : '(optional — can be set later)' }}</span>
-          <input type="password" formControlName="password" autocomplete="new-password" />
-        </label>
-
-        <div class="form-actions">
-          <button class="btn primary" type="submit" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Saving…' : 'Save' }}
-          </button>
-          <button class="btn" type="button" (click)="verify()" [disabled]="!canVerify()">
-            {{ verifying() ? 'Verifying…' : 'Verify' }}
-          </button>
-          <a class="btn" routerLink="/">Cancel</a>
+      @if (loading()) {
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading connection…</p>
         </div>
-      </form>
-    </section>
+      } @else {
+        <form [formGroup]="form" (ngSubmit)="save()" class="form-wrapper">
+          <section class="card">
+            <h3 class="card-section-title">Connection details</h3>
+            <p class="section-help">How this OCI host appears in the portal and which server MCP tools use.</p>
+
+            <div class="form-group">
+              <label class="form-label" for="displayName">Display name</label>
+              <input
+                id="displayName"
+                class="form-input"
+                type="text"
+                formControlName="displayName"
+                autocomplete="off"
+              />
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label class="form-label" for="hostname">Hostname</label>
+                <input
+                  id="hostname"
+                  class="form-input"
+                  type="text"
+                  formControlName="hostname"
+                  autocomplete="off"
+                  placeholder="portal.example.com"
+                />
+              </div>
+              <div class="form-group flex-1">
+                <label class="form-label" for="port">Port</label>
+                <input
+                  id="port"
+                  class="form-input"
+                  type="number"
+                  formControlName="port"
+                  min="1"
+                  max="65535"
+                />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="username">Username</label>
+              <input
+                id="username"
+                class="form-input"
+                type="text"
+                formControlName="username"
+                autocomplete="off"
+              />
+            </div>
+          </section>
+
+          <section class="card">
+            <h3 class="card-section-title">Credentials</h3>
+            <p class="section-help">
+              {{ editing() ? 'Leave blank to keep the stored password.' : 'Optional — you can set the password later.' }}
+            </p>
+            <div class="form-group">
+              <label class="form-label" for="password">Password</label>
+              <input
+                id="password"
+                class="form-input"
+                type="password"
+                formControlName="password"
+                autocomplete="new-password"
+              />
+            </div>
+          </section>
+
+          <section class="card action-card">
+            <div class="verify-section">
+              <div class="verify-info">
+                <h4 class="verify-title">Test connection</h4>
+                <p class="verify-desc">
+                  Try an OCI login with these host settings. New connections need a password first;
+                  existing ones can use the stored secret.
+                </p>
+              </div>
+              <button
+                class="btn btn-secondary"
+                type="button"
+                (click)="verify()"
+                [disabled]="!canVerify()"
+              >
+                {{ verifying() ? 'Verifying…' : 'Verify' }}
+              </button>
+            </div>
+
+            <hr class="action-divider" />
+
+            <div class="form-actions">
+              <a class="btn btn-secondary" routerLink="/">Cancel</a>
+              <button class="btn btn-primary" type="submit" [disabled]="form.invalid || saving()">
+                {{ saving() ? 'Saving…' : (editing() ? 'Update connection' : 'Save connection') }}
+              </button>
+            </div>
+          </section>
+        </form>
+      }
+    </div>
   `
 })
 export class ConnectionFormComponent {
@@ -73,6 +163,7 @@ export class ConnectionFormComponent {
   private readonly id = this.route.snapshot.paramMap.get('id');
 
   protected readonly editing = signal(this.id != null);
+  protected readonly loading = signal(this.id != null);
   protected readonly saving = signal(false);
   protected readonly verifying = signal(false);
   protected readonly error = signal<string | null>(null);
@@ -89,14 +180,20 @@ export class ConnectionFormComponent {
   constructor() {
     if (this.id) {
       this.service.get(this.id).subscribe({
-        next: (c) => this.form.patchValue({
-          displayName: c.displayName,
-          hostname: c.hostname,
-          port: c.port,
-          username: c.username,
-          password: ''
-        }),
-        error: () => this.error.set('Failed to load the connection.')
+        next: (c) => {
+          this.form.patchValue({
+            displayName: c.displayName,
+            hostname: c.hostname,
+            port: c.port,
+            username: c.username,
+            password: ''
+          });
+          this.loading.set(false);
+        },
+        error: () => {
+          this.loading.set(false);
+          this.error.set('Failed to load the connection.');
+        }
       });
     }
   }

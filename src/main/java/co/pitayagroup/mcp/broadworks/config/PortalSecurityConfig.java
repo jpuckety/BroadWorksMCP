@@ -21,6 +21,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.logout.HttpStatusReturningLogoutSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfToken;
@@ -34,19 +35,21 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * (Resource-Server) chain but sits below the Authorization-Server chain.
  *
  * <ul>
- *   <li>Every request must be authenticated via an interactive Google {@code oauth2Login} session
+ *   <li>The SPA shell ({@code /portal/**}) is anonymous so the Angular app can render a login page.
+ *       {@code /api/portal/**} still requires an interactive Google {@code oauth2Login} session
  *       (reusing {@link VerifiedEmailOidcUserService}, so unverified emails are rejected exactly as on
  *       the app chain).</li>
- *   <li>A {@link DelegatingAuthenticationEntryPoint} redirects {@code text/html} navigations (the SPA
- *       shell) to Google login, but returns {@code 401} for XHR/JSON API calls — so the SPA can detect
- *       an expired session instead of receiving the bearer-token challenge the app chain would send.</li>
+ *   <li>Unauthenticated JSON calls receive {@code 401} (not a login redirect) so the SPA can detect
+ *       an expired session instead of receiving the bearer-token challenge the app chain would send.
+ *       HTML entry-point handling is retained for any remaining authenticated HTML under this chain.</li>
+ *   <li>{@code POST /api/portal/logout} invalidates the session and returns {@code 204}.</li>
  *   <li>CSRF uses a {@link CookieCsrfTokenRepository} readable by JavaScript, so Angular's
  *       {@code HttpClient} echoes the {@code XSRF-TOKEN} cookie as the {@code X-XSRF-TOKEN} header.</li>
  * </ul>
  *
- * <p>The existing MCP authorization-code login is unaffected: this chain does not set a
- * {@code defaultSuccessUrl}, so Spring Security's saved-request behavior restores the original
- * destination after login.</p>
+ * <p>MCP authorization-code login is unaffected: Google callbacks live on the app chain, which uses
+ * {@code defaultSuccessUrl("/portal", false)} so a SavedRequest to {@code /oauth2/authorize} still
+ * wins over the portal landing page.</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class PortalSecurityConfig {
@@ -60,11 +63,15 @@ public class PortalSecurityConfig {
         http
                 .securityMatcher("/portal/**", "/api/portal/**")
                 .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/portal/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2Login(oauth2 -> oauth2
                         .userInfoEndpoint(userInfo -> userInfo
                                 .userAuthoritiesMapper(SecurityConfig.factorStampingAuthoritiesMapper())
                                 .oidcUserService(VerifiedEmailOidcUserService.create())))
+                .logout(logout -> logout
+                        .logoutUrl("/api/portal/logout")
+                        .logoutSuccessHandler(new HttpStatusReturningLogoutSuccessHandler(HttpStatus.NO_CONTENT)))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(portalAuthenticationEntryPoint()))
                 // Cookie-based CSRF for the SPA: the token cookie is readable by JavaScript and echoed

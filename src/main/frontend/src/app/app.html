@@ -1,6 +1,55 @@
-<header class="app-header">
-  <h1>BroadWorks Credentials Portal</h1>
-</header>
-<main class="app-main">
-  <router-outlet></router-outlet>
-</main>
+<div class="app-layout">
+  @if (auth.isAuthenticated()) {
+    <header class="app-header">
+      <div class="header-container">
+        <a routerLink="/" class="brand">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/>
+            <rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
+            <line x1="6" x2="6.01" y1="6" y2="6"/>
+            <line x1="6" x2="6.01" y1="18" y2="18"/>
+          </svg>
+          <span class="brand-title">BroadWorks</span>
+          <span class="brand-badge">Portal</span>
+        </a>
+
+        <div class="user-menu">
+          <div class="user-info" [title]="auth.user()?.name || auth.user()?.email || ''">
+            @if (auth.user()?.picture; as picture) {
+              <img class="user-avatar" [src]="picture" alt="" />
+            } @else {
+              <span class="user-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </span>
+            }
+            <span class="user-email">{{ auth.user()?.email }}</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" title="Sign out of BroadWorks" (click)="signOut()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" x2="9" y1="12" y2="12"/>
+            </svg>
+            Sign out
+          </button>
+        </div>
+      </div>
+    </header>
+  }
+
+  <main class="main-content">
+    <router-outlet></router-outlet>
+  </main>
+
+  @if (auth.isAuthenticated()) {
+    <footer class="app-footer">
+      <div class="footer-container">
+        <span>BroadWorks Credentials Portal &bull; Secure OCI Authentication for MCP</span>
+        <span class="copyright">&copy; 2026 Pitaya Group, LLC</span>
+      </div>
+    </footer>
+  }
+</div>

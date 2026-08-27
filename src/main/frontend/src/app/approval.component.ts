@@ -9,38 +9,47 @@ import { Approval, ApprovalDecision, ApprovalService } from './approval.service'
 @Component({
   selector: 'app-approval',
   template: `
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Confirm action</h2>
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h2>Confirm action</h2>
+          <p class="page-subtitle">A BroadWorks tool is waiting for a human decision.</p>
+        </div>
       </div>
 
-      @if (error()) {
-        <p class="error" role="alert">{{ error() }}</p>
-      }
-
-      @if (loading()) {
-        <p>Loading…</p>
-      } @else if (approval(); as current) {
-        <p class="hint">A BroadWorks tool is waiting for you to confirm this action:</p>
-        <p><strong>{{ current.action }}</strong></p>
-
-        @if (success()) {
-          <p class="success" role="status">{{ success() }}</p>
-        } @else if (current.status === 'PENDING') {
-          <p class="hint">Confirm or deny below. After you choose, you can close this tab.</p>
-          <div class="form-actions">
-            <button class="btn primary" type="button" [disabled]="saving()" (click)="decide('APPROVED')">
-              {{ saving() ? 'Saving…' : 'Confirm' }}
-            </button>
-            <button class="btn danger" type="button" [disabled]="saving()" (click)="decide('DECLINED')">
-              Deny
-            </button>
-          </div>
-        } @else {
-          <p class="success" role="status">{{ alreadyDecidedMessage(current.status) }}</p>
+      <section class="card">
+        @if (error()) {
+          <p class="alert alert-danger" role="alert">{{ error() }}</p>
         }
-      }
-    </section>
+
+        @if (loading()) {
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading approval…</p>
+          </div>
+        } @else if (approval(); as current) {
+          <h3 class="card-section-title">Requested action</h3>
+          <p class="section-help">A BroadWorks tool is waiting for you to confirm this action:</p>
+          <p class="approval-action">{{ current.action }}</p>
+
+          @if (success()) {
+            <p class="alert alert-success" role="status">{{ success() }}</p>
+          } @else if (current.status === 'PENDING') {
+            <p class="hint">Confirm or deny below. After you choose, you can close this tab.</p>
+            <div class="form-actions">
+              <button class="btn btn-outline-danger" type="button" [disabled]="saving()" (click)="decide('DECLINED')">
+                Deny
+              </button>
+              <button class="btn btn-primary" type="button" [disabled]="saving()" (click)="decide('APPROVED')">
+                {{ saving() ? 'Saving…' : 'Confirm' }}
+              </button>
+            </div>
+          } @else {
+            <p class="alert alert-success" role="status">{{ alreadyDecidedMessage(current.status) }}</p>
+          }
+        }
+      </section>
+    </div>
   `
 })
 export class ApprovalComponent {

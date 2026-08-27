@@ -11,34 +11,53 @@ import { ConnectionsService } from './connections.service';
   selector: 'app-set-password',
   imports: [ReactiveFormsModule, RouterLink],
   template: `
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Set password</h2>
-        <a class="btn" routerLink="/">Back</a>
+    <div class="container">
+      <div class="page-header">
+        <div>
+          <h2>Set password</h2>
+          <p class="page-subtitle">
+            Stored encrypted at rest and never shown again or shared with the AI agent.
+          </p>
+        </div>
+        <a class="btn btn-secondary" routerLink="/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" aria-hidden="true">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          Back
+        </a>
       </div>
 
-      <p class="hint">
-        Set the BroadWorks password for this connection. It is stored encrypted and never shown again
-        or shared with the AI agent.
-      </p>
+      <section class="card">
+        <h3 class="card-section-title">Connection password</h3>
+        <p class="section-help">
+          Set the BroadWorks password for this connection. The current value is never displayed.
+        </p>
 
-      @if (error()) {
-        <p class="error" role="alert">{{ error() }}</p>
-      }
+        @if (error()) {
+          <p class="alert alert-danger" role="alert">{{ error() }}</p>
+        }
 
-      <form [formGroup]="form" (ngSubmit)="save()" class="form">
-        <label>
-          <span>New password</span>
-          <input type="password" formControlName="password" autocomplete="new-password" />
-        </label>
-        <div class="form-actions">
-          <button class="btn primary" type="submit" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Saving…' : 'Save password' }}
-          </button>
-          <a class="btn" routerLink="/">Cancel</a>
-        </div>
-      </form>
-    </section>
+        <form [formGroup]="form" (ngSubmit)="save()">
+          <div class="form-group">
+            <label class="form-label" for="password">New password</label>
+            <input
+              id="password"
+              class="form-input"
+              type="password"
+              formControlName="password"
+              autocomplete="new-password"
+            />
+          </div>
+          <div class="form-actions">
+            <a class="btn btn-secondary" routerLink="/">Cancel</a>
+            <button class="btn btn-primary" type="submit" [disabled]="form.invalid || saving()">
+              {{ saving() ? 'Saving…' : 'Save password' }}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   `
 })
 export class SetPasswordComponent {
