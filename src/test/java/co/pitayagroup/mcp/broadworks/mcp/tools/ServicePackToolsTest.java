@@ -232,7 +232,15 @@ class ServicePackToolsTest {
         try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
              MockedConstruction<ServiceProvider.ServiceProviderServicePackAddRequest> addMock =
                      mockConstruction(ServiceProvider.ServiceProviderServicePackAddRequest.class,
-                             (m, ctx) -> when(m.fire()).thenReturn(addResponse));
+                             (m, ctx) -> {
+                                 when(m.fire()).thenReturn(addResponse);
+                                 assertThat(ctx.arguments()).hasSize(4);
+                                 assertThat(ctx.arguments().get(0)).isSameAs(sp);
+                                 assertThat(ctx.arguments().get(1)).isEqualTo("Gold");
+                                 assertThat(ctx.arguments().get(2)).isEqualTo(true);
+                                 final UnboundedPositiveInt qty = (UnboundedPositiveInt) ctx.arguments().get(3);
+                                 assertThat(qty.getQuantity()).isEqualTo(10);
+                             });
              MockedConstruction<ServiceProvider.ServiceProviderServicePackGetDetailListRequest> ignored =
                      mockConstruction(ServiceProvider.ServiceProviderServicePackGetDetailListRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(detail))) {
@@ -242,14 +250,7 @@ class ServicePackToolsTest {
                     "sp-1", "Gold", "desc", true, 10, null, List.of("Call Waiting"), null);
 
             final ServiceProvider.ServiceProviderServicePackAddRequest req = addMock.constructed().get(0);
-            verify(req).setServicePackName("Gold");
             verify(req).setServicePackDescription("desc");
-            verify(req).setIsAvailableForUse(true);
-
-            final ArgumentCaptor<UnboundedPositiveInt> qtyCaptor =
-                    ArgumentCaptor.forClass(UnboundedPositiveInt.class);
-            verify(req).setServicePackQuantity(qtyCaptor.capture());
-            assertThat(qtyCaptor.getValue().getQuantity()).isEqualTo(10);
 
             final ArgumentCaptor<UserService[]> serviceCaptor = ArgumentCaptor.forClass(UserService[].class);
             verify(req).setServiceName(serviceCaptor.capture());
@@ -273,7 +274,15 @@ class ServicePackToolsTest {
         try (MockedStatic<ServiceProvider> statics = mockStatic(ServiceProvider.class);
              MockedConstruction<ServiceProvider.ServiceProviderServicePackAddRequest> addMock =
                      mockConstruction(ServiceProvider.ServiceProviderServicePackAddRequest.class,
-                             (m, ctx) -> when(m.fire()).thenReturn(addResponse));
+                             (m, ctx) -> {
+                                 when(m.fire()).thenReturn(addResponse);
+                                 assertThat(ctx.arguments()).hasSize(4);
+                                 assertThat(ctx.arguments().get(0)).isSameAs(sp);
+                                 assertThat(ctx.arguments().get(1)).isEqualTo("Gold");
+                                 assertThat(ctx.arguments().get(2)).isNull();
+                                 final UnboundedPositiveInt qty = (UnboundedPositiveInt) ctx.arguments().get(3);
+                                 assertThat(qty.getUnlimited()).isTrue();
+                             });
              MockedConstruction<ServiceProvider.ServiceProviderServicePackGetDetailListRequest> ignored =
                      mockConstruction(ServiceProvider.ServiceProviderServicePackGetDetailListRequest.class,
                              (m, ctx) -> when(m.fire()).thenReturn(detail))) {
@@ -282,10 +291,6 @@ class ServicePackToolsTest {
             tools.createServicePack("sp-1", "Gold", null, null, null, true, null, null);
 
             final ServiceProvider.ServiceProviderServicePackAddRequest req = addMock.constructed().get(0);
-            final ArgumentCaptor<UnboundedPositiveInt> qtyCaptor =
-                    ArgumentCaptor.forClass(UnboundedPositiveInt.class);
-            verify(req).setServicePackQuantity(qtyCaptor.capture());
-            assertThat(qtyCaptor.getValue().getUnlimited()).isTrue();
             verify(req, never()).setServiceName(any(UserService[].class));
         }
     }

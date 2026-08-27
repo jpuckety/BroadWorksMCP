@@ -192,19 +192,15 @@ public class ServicePackTools {
         final BroadWorksServer server = connect(resourceId);
         final ServiceProvider sp = populatedServiceProvider(server, spId);
         try {
-            final ServiceProvider.ServiceProviderServicePackAddRequest request =
-                    new ServiceProvider.ServiceProviderServicePackAddRequest();
-            request.setServiceProvider(sp);
-            request.setServicePackName(packName);
-            apply(description, request::setServicePackDescription);
-            if (availableForUse != null) {
-                request.setIsAvailableForUse(availableForUse);
-            }
+            // The no-arg constructor leaves Request.broadWorksServer null; setServiceProvider only
+            // stores the SP field and does not wire the server. Use the SP-taking constructor so
+            // fire() can resolve RequestContext (same pattern as modify/delete).
             final UnboundedPositiveInt quantityValue =
                     ServiceEnums.toUnboundedPositiveInt(quantityOf(quantity, unlimited));
-            if (quantityValue != null) {
-                request.setServicePackQuantity(quantityValue);
-            }
+            final ServiceProvider.ServiceProviderServicePackAddRequest request =
+                    new ServiceProvider.ServiceProviderServicePackAddRequest(
+                            sp, packName, availableForUse, quantityValue);
+            apply(description, request::setServicePackDescription);
             if (userServices.length > 0) {
                 request.setServiceName(userServices);
             }
