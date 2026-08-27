@@ -8,6 +8,7 @@ import co.pitayagroup.mcp.broadworks.auth.store.SessionStore;
 import co.pitayagroup.mcp.broadworks.config.AuthTokenProperties;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
@@ -28,6 +29,7 @@ import org.springframework.security.oauth2.server.authorization.settings.TokenSe
  * best-effort and can lag by up to ~48 hours, during which an expired registration must not keep
  * working.</p>
  */
+@Slf4j
 @RequiredArgsConstructor
 public class StoreBackedRegisteredClientRepository implements RegisteredClientRepository {
 
@@ -56,18 +58,25 @@ public class StoreBackedRegisteredClientRepository implements RegisteredClientRe
 
     @Override
     public RegisteredClient findById(String id) {
-        return sessionStore.getClient(id)
-                .filter(StoreBackedRegisteredClientRepository::isCurrent)
-                .map(this::toRegisteredClient)
-                .orElse(null);
+        return load(id);
     }
 
     @Override
     public RegisteredClient findByClientId(String clientId) {
-        return sessionStore.getClient(clientId)
-                .filter(StoreBackedRegisteredClientRepository::isCurrent)
-                .map(this::toRegisteredClient)
-                .orElse(null);
+        return load(clientId);
+    }
+
+    private RegisteredClient load(String clientId) {
+        final RegisteredClientRecord record = sessionStore.getClient(clientId).orElse(null);
+        if (record == null) {
+            log.warn("Unknown OAuth client_id={}", clientId);
+            return null;
+        }
+        if (!isCurrent(record)) {
+            log.warn("Expired OAuth client_id={} expiredAt={}", clientId, record.expiresAt());
+            return null;
+        }
+        return toRegisteredClient(record);
     }
 
     private static boolean isCurrent(RegisteredClientRecord record) {

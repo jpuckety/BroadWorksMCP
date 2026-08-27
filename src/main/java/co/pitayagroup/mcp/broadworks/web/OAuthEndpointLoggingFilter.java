@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.UUID;
 
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -57,13 +58,13 @@ public class OAuthEndpointLoggingFilter extends OncePerRequestFilter {
             final int status = response.getStatus();
             final String location = response.getHeader(HttpHeaders.LOCATION);
             if (status >= 500) {
-                log.error("OAuth request completed method={} uri={} params=[{}] status={} durationMs={}",
+                log.error("OAuth request completed method={} uri={} params=[{}] status={} durationMs={} error={}",
                         request.getMethod(), request.getRequestURI(), describeParameters(request),
-                        status, durationMs);
+                        status, durationMs, oauthError(request));
             } else if (status >= 400) {
-                log.warn("OAuth request rejected method={} uri={} params=[{}] status={} durationMs={}",
+                log.warn("OAuth request rejected method={} uri={} params=[{}] status={} durationMs={} error={}",
                         request.getMethod(), request.getRequestURI(), describeParameters(request),
-                        status, durationMs);
+                        status, durationMs, oauthError(request));
             } else {
                 log.info("OAuth request completed method={} uri={} params=[{}] status={} durationMs={} location={}",
                         request.getMethod(), request.getRequestURI(), describeParameters(request),
@@ -110,6 +111,19 @@ public class OAuthEndpointLoggingFilter extends OncePerRequestFilter {
         }
         final int query = location.indexOf('?');
         return query < 0 ? location : location.substring(0, query) + "?...";
+    }
+
+    /**
+     * @return SAS {@code sendError} message when present (e.g. {@code [invalid_request]
+     * OAuth 2.0 Parameter: client_id}), otherwise {@code "-"}. Never a token or secret.
+     */
+    private static String oauthError(HttpServletRequest request) {
+        final Object message = request.getAttribute(RequestDispatcher.ERROR_MESSAGE);
+        if (message == null) {
+            return "-";
+        }
+        final String text = message.toString();
+        return text.isBlank() ? "-" : text;
     }
 
     private static boolean hasBearerToken(HttpServletRequest request) {

@@ -122,6 +122,16 @@ class OAuthDiscoveryAndLoginRedirectTest {
     }
 
     @Test
+    void authorizeRejectsUnknownClientId() throws Exception {
+        // MCP clients cache DCR credentials on disk. After an auth-server rebuild the cached
+        // client_id is unknown, which is a 400 (not a redirect_uri mismatch).
+        mockMvc.perform(get(authorizeUrl("9892d62a-33b9-4bad-b7bb-727164c985ef",
+                        "http://localhost:56056/callback", "http://localhost:8080/mcp"))
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void authorizeRejectsLocalhostRedirectWithDifferentPath() throws Exception {
         String clientId = registerClient("http://localhost:1111/callback");
 

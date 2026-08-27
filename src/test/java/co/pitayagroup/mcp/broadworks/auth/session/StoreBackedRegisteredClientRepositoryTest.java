@@ -39,6 +39,11 @@ class StoreBackedRegisteredClientRepositoryTest {
     }
 
     @Test
+    void unknownClientIdReturnsNull() {
+        assertThat(repository(new InMemorySessionStore()).findByClientId("missing-client")).isNull();
+    }
+
+    @Test
     void rejectsExpiredRegistrationsEvenWhenTheStoreStillReturnsThem() {
         // DynamoDB TTL deletion is best-effort and can lag by ~48h, so the repository must not rely
         // on the store having already dropped the item. The stubbed store models that lag.
