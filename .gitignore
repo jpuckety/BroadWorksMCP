@@ -12,8 +12,9 @@ cdk.out/
 .env
 .env.*
 !.env.example
-# Local Alpaca toolkit license file (ECG runtime / laptop). AWS copies live in MCPCICD.
+# Local Alpaca toolkit license (laptop) and per-env copies for ./run.sh push-secrets-*.
 alpaca-license.txt
+alpaca-license.*.txt
 
 # ===== Logs & temp =====
 *.log

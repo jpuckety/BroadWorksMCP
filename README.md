@@ -94,8 +94,9 @@ mvn -Pinstall-alpaca clean verify
 > **Tip:** the repo-root `run.sh` wraps local build, test, and run. Run
 > `./run.sh help` for the full list; e.g. `./run.sh all` (install-alpaca +
 > verify), `./run.sh build`, `./run.sh test`, `./run.sh run`, `./run.sh
-> docker-build`, `./run.sh synth`. AWS deploy, image promotion, and SSM
-> secrets are owned by [MCPCICD](https://github.com/jpuckety/MCPCICD).
+> docker-build`, `./run.sh synth`. AWS deploy and image promotion are owned
+> by [MCPCICD](https://github.com/jpuckety/MCPCICD). SSM secrets for this app
+> are `./run.sh push-secrets-dev` / `push-secrets-prod`.
 
 - Unit tests cover the token factory, both stores, encryption, ID-token verification, and the MCP
   tools.
@@ -382,23 +383,23 @@ Merges to `master` are released by MCPCICD.
 Destroy and recreate (or replace the service logical ID) if Dev/Prod already run the previous ALB
 pattern.
 
-1. Create the SSM SecureString parameters:
+1. Create the SSM SecureString parameters in **each** env account before the
+   first `cdk deploy` of that account. Laptop `.env` is local-only and is not
+   read by the pipeline or ECS. Copy Google keys to `.env.dev` / `.env.prod`
+   (and Alpaca to `ALPACA_LICENSE_KEY` or `alpaca-license.dev.txt` /
+   `alpaca-license.prod.txt`):
+
+   ```bash
+   ./run.sh push-secrets-dev
+   ./run.sh push-secrets-prod
+   ```
+
+   Equivalent without the wrapper:
 
    ```bash
    aws ssm put-parameter --name /broadworks-mcp/google-client-id     --type SecureString --value "<client-id>"
    aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
    aws ssm put-parameter --name /broadworks-mcp/alpaca-license-key   --type SecureString --value "<license>"
-   ```
-
-   Or push per environment from [MCPCICD](https://github.com/jpuckety/MCPCICD)
-   (that repo's `.env.dev` / `.env.prod` plus `alpaca-license.dev.txt` /
-   `alpaca-license.prod.txt`). This repo's `.env` is local-only and is not
-   read by the pipeline or ECS:
-
-   ```bash
-   # in MCPCICD
-   ./run.sh push-secrets-dev
-   ./run.sh push-secrets-prod
    ```
 
 2. Deploy infrastructure with the public hostname (placeholder image; CodeDeploy / MCPCICD ships

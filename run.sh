@@ -2,9 +2,10 @@
 #
 # run.sh — local build, test, and run wrapper for broadworks-mcp.
 #
-# AWS deploy, image promotion, and SSM secrets are owned by MCPCICD
-# (https://github.com/jpuckety/MCPCICD). This script is for laptop use:
-# Maven, local HTTP/stdio servers, docker build, and optional CDK synth.
+# AWS deploy and image promotion are owned by MCPCICD
+# (https://github.com/jpuckety/MCPCICD). This script is for laptop use
+# (Maven, local HTTP/stdio servers, docker build, CDK synth) and for
+# pushing this app's SSM secrets into Dev/Prod.
 #
 # Usage:
 #   ./run.sh <command> [extra args...]
@@ -22,8 +23,9 @@ CDK_DIR="${PROJECT_ROOT}/cdk"
 
 # Local, git-ignored file holding per-developer secrets (GOOGLE_CLIENT_ID /
 # GOOGLE_CLIENT_SECRET, ALPACA_LICENSE_KEY). See .env.example. Override the
-# location with ENV_FILE=... .
+# location with ENV_FILE=... . AWS SSM push uses .env.dev / .env.prod instead.
 ENV_FILE="${ENV_FILE:-${PROJECT_ROOT}/.env}"
+CDK_JSON="${CDK_DIR}/cdk.json"
 
 # The Maven profile that installs the Alpaca toolkit JARs from lib/ during the
 # build. Applied to every Maven build target below.
@@ -84,6 +86,63 @@ load_dotenv() {
       export "${key}=${value}"
     fi
   done < "${file}"
+}
+
+relpath() {
+  local path="$1"
+  if [[ "$path" == "${PROJECT_ROOT}/"* ]]; then
+    printf '%s' "${path#${PROJECT_ROOT}/}"
+  else
+    printf '%s' "$path"
+  fi
+}
+
+with_profile() {
+  local profile="${1:-}"
+  shift
+  if [[ -n "$profile" ]]; then
+    AWS_PROFILE="$profile" "$@"
+  else
+    "$@"
+  fi
+}
+
+# Names from cdk/cdk.json context.ssm, with the stack defaults as fallback.
+ssm_parameter_name() {
+  local key="$1"
+  local fallback="$2"
+  node -e '
+    const fs = require("fs");
+    let value = process.argv[3];
+    try {
+      const ssm = (JSON.parse(fs.readFileSync(process.argv[1], "utf8")).context || {}).ssm || {};
+      if (ssm[process.argv[2]]) value = String(ssm[process.argv[2]]);
+    } catch (err) {}
+    process.stdout.write(value);
+  ' "${CDK_JSON}" "$key" "$fallback"
+}
+
+read_license_file() {
+  local file="$1"
+  [[ -f "$file" ]] || die "Alpaca license file not found: $(relpath "$file")"
+  local value
+  value="$(cat "$file")"
+  value="${value%$'\n'}"
+  [[ -n "$value" ]] || die "Alpaca license file is empty: $(relpath "$file")"
+  printf '%s' "$value"
+}
+
+put_secure_params() {
+  while [[ $# -ge 2 ]]; do
+    aws ssm put-parameter \
+      --name "$1" \
+      --type SecureString \
+      --value "$2" \
+      --overwrite \
+      >/dev/null
+    log "Pushed $1"
+    shift 2
+  done
 }
 
 mvn_build() {
@@ -213,6 +272,65 @@ cmd_all() {
 }
 
 # --------------------------------------------------------------------------
+# SSM secrets (Dev/Prod accounts)
+# --------------------------------------------------------------------------
+cmd_push_secrets() {
+  local env_name="$1"
+  local env_slug profile env_file license_file client_id client_secret alpaca
+  env_slug="$(printf '%s' "$env_name" | tr '[:upper:]' '[:lower:]')"
+  require aws
+  require node
+
+  case "$env_name" in
+    Dev)
+      profile="${DEV_PROFILE:-${AWS_PROFILE:-}}"
+      env_file="${DEV_ENV_FILE:-${PROJECT_ROOT}/.env.dev}"
+      license_file="${DEV_ALPACA_LICENSE_FILE:-}"
+      ;;
+    Prod)
+      profile="${PROD_PROFILE:-${AWS_PROFILE:-}}"
+      env_file="${PROD_ENV_FILE:-${PROJECT_ROOT}/.env.prod}"
+      license_file="${PROD_ALPACA_LICENSE_FILE:-}"
+      ;;
+    *)
+      die "unknown env '${env_name}'"
+      ;;
+  esac
+
+  [[ -f "$env_file" ]] || die "missing $(relpath "$env_file"). Copy GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET there (laptop .env is not pushed)."
+  load_dotenv "$env_file"
+
+  client_id="${GOOGLE_CLIENT_ID:-}"
+  client_secret="${GOOGLE_CLIENT_SECRET:-}"
+  [[ -n "$client_id" ]] || die "missing GOOGLE_CLIENT_ID in $(relpath "$env_file")"
+  [[ -n "$client_secret" ]] || die "missing GOOGLE_CLIENT_SECRET in $(relpath "$env_file")"
+
+  if [[ -n "$license_file" ]]; then
+    alpaca="$(read_license_file "$license_file")"
+  elif [[ -f "${PROJECT_ROOT}/alpaca-license.${env_slug}.txt" ]]; then
+    alpaca="$(read_license_file "${PROJECT_ROOT}/alpaca-license.${env_slug}.txt")"
+  elif [[ -n "${ALPACA_LICENSE_KEY:-}" ]]; then
+    alpaca="${ALPACA_LICENSE_KEY}"
+  else
+    die "missing ${env_name} Alpaca license. Set ALPACA_LICENSE_KEY in $(relpath "$env_file") or provide alpaca-license.${env_slug}.txt"
+  fi
+
+  local id_name secret_name license_name account
+  id_name="$(ssm_parameter_name googleClientId /broadworks-mcp/google-client-id)"
+  secret_name="$(ssm_parameter_name googleClientSecret /broadworks-mcp/google-client-secret)"
+  license_name="$(ssm_parameter_name alpacaLicenseKey /broadworks-mcp/alpaca-license-key)"
+  account="$(with_profile "$profile" aws sts get-caller-identity --query Account --output text)"
+  log "Pushing SSM SecureString secrets to ${env_name} account ${account}"
+  log "  Google OAuth from $(relpath "$env_file")"
+  log "  Alpaca license from file or ALPACA_LICENSE_KEY"
+  with_profile "$profile" put_secure_params \
+    "$id_name" "$client_id" \
+    "$secret_name" "$client_secret" \
+    "$license_name" "$alpaca"
+  log "Done. BroadWorksMcpStack can now read ${id_name}, ${secret_name}, ${license_name}."
+}
+
+# --------------------------------------------------------------------------
 # Usage
 # --------------------------------------------------------------------------
 usage() {
@@ -221,7 +339,8 @@ run.sh — local build, test, and run wrapper for broadworks-mcp
 
 Usage: ./run.sh <command> [extra args...]
 
-AWS deploy, image promotion, and SSM secrets live in MCPCICD, not here.
+AWS deploy and image promotion live in MCPCICD. SSM secrets for this app
+are pushed from here.
 
 Build & test:
   install-alpaca   Install the Alpaca toolkit JARs from lib/ into the local Maven repo.
@@ -242,16 +361,27 @@ CDK (local check only):
   cdk-install      Install CDK Node dependencies (cdk/).
   synth            Synthesize the CloudFormation template.
 
+SSM secrets (this app, current AWS account):
+  push-secrets-dev Write /broadworks-mcp/google-client-* and alpaca-license-key
+                   from .env.dev (laptop .env is not used).
+  push-secrets-prod Same for Prod from .env.prod.
+
 Environment overrides:
   JAVA_HOME         JDK 21 to use for Maven/java.
   IMAGE_NAME        Docker image tag for docker-build (default broadworks-mcp:latest).
   ENV_FILE          Path to the KEY=VALUE file (default: <repo>/.env).
+  DEV_PROFILE / PROD_PROFILE   AWS CLI profile for push-secrets-* (else AWS_PROFILE).
+  DEV_ENV_FILE / PROD_ENV_FILE KEY=VALUE files (default: .env.dev / .env.prod).
+  DEV_ALPACA_LICENSE_FILE / PROD_ALPACA_LICENSE_FILE
+                    Override alpaca-license.dev.txt / alpaca-license.prod.txt.
 
 Configuration file:
   .env              Optional, git-ignored KEY=VALUE file at the repo root loaded
-                    automatically on every command. Values already set in the
+                    automatically on local commands. Values already set in the
                     environment take precedence. See .env.example for the
                     local-only variables. Pipeline / ECS do not read this file.
+  .env.dev / .env.prod
+                    Git-ignored files for ./run.sh push-secrets-dev|prod.
 
 Any extra args after the command are forwarded to the underlying tool
 (e.g. './run.sh test -Dtest=OpaqueTokenFactoryTest').
@@ -262,15 +392,29 @@ EOF
 # Dispatch
 # --------------------------------------------------------------------------
 main() {
+  local cmd="${1:-help}"
+  [[ $# -gt 0 ]] && shift || true
+
+  case "${cmd}" in
+    push-secrets-dev|push_secrets_dev)
+      cmd_push_secrets Dev "$@"
+      return
+      ;;
+    push-secrets-prod|push_secrets_prod)
+      cmd_push_secrets Prod "$@"
+      return
+      ;;
+    push-secrets|push_secrets)
+      die "use ./run.sh push-secrets-dev or ./run.sh push-secrets-prod (laptop .env is not pushed)"
+      ;;
+  esac
+
   # Read per-developer overrides/secrets from .env (if present) before doing
   # anything else, so every command below sees them. Values already exported
   # in the environment (or passed inline) still take precedence.
   load_dotenv "${ENV_FILE}"
   # Re-honor JAVA_HOME in case it was provided via .env.
   [[ -n "${JAVA_HOME:-}" ]] && export JAVA_HOME
-
-  local cmd="${1:-help}"
-  [[ $# -gt 0 ]] && shift || true
 
   case "${cmd}" in
     install-alpaca|install_alpaca) cmd_install_alpaca "$@" ;;
@@ -285,8 +429,8 @@ main() {
     cdk-install|cdk_install)       cmd_cdk_install "$@" ;;
     synth)                         cmd_synth "$@" ;;
     help|-h|--help)                usage ;;
-    push-secrets|push_secrets|refresh-image|refresh_image|deploy|undeploy|destroy|bootstrap)
-      die "'${cmd}' was removed from this repo. Use MCPCICD for AWS secrets, bootstrap, and deploy."
+    refresh-image|refresh_image|deploy|undeploy|destroy|bootstrap)
+      die "'${cmd}' was removed from this repo. Use MCPCICD for AWS bootstrap and deploy."
       ;;
     *) warn "Unknown command: ${cmd}"; echo; usage; exit 2 ;;
   esac
