@@ -390,16 +390,23 @@ pattern.
    `alpaca-license.prod.txt`):
 
    ```bash
-   ./run.sh push-secrets-dev
-   ./run.sh push-secrets-prod
+   ./run.sh push-secrets-dev    # AWS profile mcp-dev
+   ./run.sh push-secrets-prod   # AWS profile mcp-prod
    ```
 
-   Equivalent without the wrapper:
+   These commands do not use the laptop's default AWS credentials. Override the
+   profile with `DEV_PROFILE` / `PROD_PROFILE` if the MCPCICD child profiles
+   have different names.
+
+   Equivalent without the wrapper (repeat with `--profile mcp-prod` for Prod):
 
    ```bash
-   aws ssm put-parameter --name /broadworks-mcp/google-client-id     --type SecureString --value "<client-id>"
-   aws ssm put-parameter --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
-   aws ssm put-parameter --name /broadworks-mcp/alpaca-license-key   --type SecureString --value "<license>"
+   aws ssm put-parameter --profile mcp-dev --region us-east-1 \
+     --name /broadworks-mcp/google-client-id --type SecureString --value "<client-id>"
+   aws ssm put-parameter --profile mcp-dev --region us-east-1 \
+     --name /broadworks-mcp/google-client-secret --type SecureString --value "<client-secret>"
+   aws ssm put-parameter --profile mcp-dev --region us-east-1 \
+     --name /broadworks-mcp/alpaca-license-key --type SecureString --value "<license>"
    ```
 
 2. Deploy infrastructure with the public hostname (placeholder image; CodeDeploy / MCPCICD ships
